@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import json
+import subprocess
+
+from leadops.config import WorkspaceConfig
+from leadops.models import AssessmentResult, assessment_from_dict
+from leadops.repository import TargetRecord
+
+
+class CommandProvider:
+    name = "command"
+
+    def assess(
+        self,
+        target: TargetRecord,
+        config: WorkspaceConfig,
+        feedback_context: dict[str, list[dict[str, str]]] | None = None,
+    ) -> AssessmentResult:
+        if not config.llm.command:
+            raise RuntimeError("Command provider selected but no command is configured.")
+
+        payload = {
+            "profile": {
+                "name": config.profile.name,
+                "offer": config.profile.offer,
+                "hard_rejects": config.profile.hard_rejects,
+                "daily_new_lead_cap": config.profile.daily_new_lead_cap,
+            },
+            "feedback": feedback_context or {"liked": [], "avoided": []},
+            "target": {
+                "id": target.id,
+                "kind": target.kind,
+                "name": target.name,
+                "url": target.url,
+                "source": target.source,
+                "notes": target.notes,
+                "raw_evidence": target.raw_evidence,
+                "status": target.status,
+            },
+        }
+        completed = subprocess.run(
+            config.llm.command,
+            input=json.dumps(payload),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=config.llm.timeout_seconds,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"Command provider failed with exit code {completed.returncode}: {completed.stderr.strip()}"
+            )
+        raw = json.loads(completed.stdout)
+        result = assessment_from_dict(raw)
+        result.raw_response = raw
+        return result

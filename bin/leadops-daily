@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+if [[ -f "$HOME/.zprofile" ]]; then
+  # shellcheck disable=SC1090
+  source "$HOME/.zprofile"
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+if [[ $# -lt 1 ]]; then
+  echo "usage: leadops-daily <workspace> [run-daily args...]" >&2
+  exit 2
+fi
+
+workspace="$1"
+shift
+
+exec python3 -m leadops run-daily --workspace "$workspace" "$@"
