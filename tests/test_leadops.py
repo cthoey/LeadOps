@@ -167,9 +167,10 @@ class LeadOpsTests(unittest.TestCase):
     def test_command_provider_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
+            fake_provider = Path(__file__).with_name("fake_provider.py").resolve()
             config_path = workspace / "leadops.toml"
             config_path.write_text(
-                """
+                f"""
 [profile]
 name = "Your Practice"
 offer = "Independent product engineer helping founders and very small teams."
@@ -180,7 +181,7 @@ hard_rejects = []
 
 [llm]
 provider = "command"
-command = "python3 /Users/choey/Documents/10-projects/shared-tools/leadops/tests/fake_provider.py"
+command = "python3 {fake_provider}"
 timeout_seconds = 30
 """.strip()
                 + "\n",
@@ -204,9 +205,10 @@ timeout_seconds = 30
     def test_discover_web_ingests_candidates_and_tracks_query_run(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
+            fake_discovery_provider = Path(__file__).with_name("fake_discovery_provider.py").resolve()
             config_path = workspace / "leadops.toml"
             config_path.write_text(
-                """
+                f"""
 [profile]
 name = "Your Practice"
 offer = "Independent product engineer helping founders and very small teams."
@@ -221,7 +223,7 @@ timeout_seconds = 30
 
 [discovery]
 provider = "command"
-command = "python3 /Users/choey/Documents/10-projects/shared-tools/leadops/tests/fake_discovery_provider.py"
+command = "python3 {fake_discovery_provider}"
 timeout_seconds = 30
 """.strip()
                 + "\n",
@@ -257,9 +259,10 @@ timeout_seconds = 30
     def test_discover_track_runs_multiple_queries(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
+            fake_discovery_provider = Path(__file__).with_name("fake_discovery_provider.py").resolve()
             config_path = workspace / "leadops.toml"
             config_path.write_text(
-                """
+                f"""
 [profile]
 name = "Your Practice"
 offer = "Independent product engineer helping founders and very small teams."
@@ -274,7 +277,7 @@ timeout_seconds = 30
 
 [discovery]
 provider = "command"
-command = "python3 /Users/choey/Documents/10-projects/shared-tools/leadops/tests/fake_discovery_provider.py"
+command = "python3 {fake_discovery_provider}"
 timeout_seconds = 30
 """.strip()
                 + "\n",
@@ -296,6 +299,32 @@ timeout_seconds = 30
             self.assertEqual(result.total_candidates, 3)
             self.assertEqual(result.total_created, 2)
             self.assertEqual(result.total_updated, 1)
+
+    def test_candidate_snooze_hides_until_due_date(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            repo = self._repo_for_workspace(workspace)
+            config = load_workspace_config(workspace)
+
+            target_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Snoozed Candidate",
+                url="https://example.com/waitlist",
+                source="manual",
+                notes="Founder-led beta product with clear early-stage build work.",
+            )
+            repo.update_status(
+                target_id,
+                status="candidate",
+                followup_date="2026-04-10",
+                reason="Snoozed until tomorrow.",
+            )
+
+            hidden_result = run_daily(repo, config, "2026-04-09")
+            self.assertEqual(hidden_result.surfaced_new, 0)
+
+            visible_result = run_daily(repo, config, "2026-04-10")
+            self.assertEqual(visible_result.surfaced_new, 1)
 
 
 if __name__ == "__main__":

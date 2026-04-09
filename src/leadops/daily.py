@@ -40,7 +40,7 @@ def run_daily(
 
         candidate_items = _assess_candidates(
             repo=repo,
-            targets=repo.list_candidate_targets(),
+            targets=repo.list_candidate_targets(packet_date),
             provider=provider,
             config=config,
             run_id=run_id,

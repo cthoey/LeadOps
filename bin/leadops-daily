@@ -19,4 +19,32 @@ fi
 workspace="$1"
 shift
 
+state_dir="$workspace/var"
+state_path="$state_dir/run-state.env"
+mkdir -p "$state_dir"
+
+existing_pid=""
+if [[ -f "$state_path" ]]; then
+  existing_pid="$(sed -n '1s/^pid=//p' "$state_path" 2>/dev/null || true)"
+fi
+
+if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+  echo "LeadOps run already active (pid $existing_pid)." >&2
+  exit 1
+fi
+
+started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+printf 'pid=%s\nstarted_at=%s\nworkspace=%s\nmode=run-daily\n' "$$" "$started_at" "$workspace" > "$state_path"
+
+cleanup() {
+  if [[ -f "$state_path" ]]; then
+    current_pid="$(sed -n '1s/^pid=//p' "$state_path" 2>/dev/null || true)"
+    if [[ "$current_pid" == "$$" ]]; then
+      rm -f "$state_path"
+    fi
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
 exec python3 -m leadops run-daily --workspace "$workspace" "$@"

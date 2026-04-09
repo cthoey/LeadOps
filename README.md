@@ -1,37 +1,54 @@
 # LeadOps
 
-LeadOps is a small local tool for daily lead curation.
+LeadOps is a local-first CLI for precision lead curation.
 
-It is intentionally not a web app and not an autonomous outreach agent.
+It is built for independents and small studios that care more about `lead quality` than lead volume. LeadOps runs a bounded daily pass, scores candidates against your actual business model, drafts a small review packet, and stops before any external action.
 
-The product thesis is:
+It is intentionally not:
 
-- optimize for precision, not volume
-- surface only a few leads you would actually want to follow up on
-- keep state locally with SQLite
-- use a pluggable reasoning provider for assessment and drafting
-- stop at a human review boundary
+- a CRM
+- a mass outreach tool
+- an autonomous sales agent
+- an auto-send email system
 
-## Current MVP
+## What It Does
 
-The first cut includes:
+- keeps pipeline state locally in SQLite
+- dedupes targets across days and sources
+- runs bounded web discovery
+- supports repeatable discovery tracks
+- uses structured LLM assessment and drafting
+- learns from approve / reject / snooze decisions
+- writes a dated daily brief and plain-text digest
+- can send that digest by SMTP
+- can install a macOS `launchd` job for a daily run
 
-- workspace bootstrap
-- SQLite state
-- target dedupe
-- discovery query-run tracking
-- candidate import
-- public URL ingestion with lightweight page extraction
-- bounded web discovery ingestion
-- daily packet generation
-- pluggable assessment provider
-- packaged OpenAI bridge for structured assessment
-- packaged OpenAI bridge for structured web discovery
-- markdown and JSON packet output
+## How It Works
 
-Retrieval is intentionally bounded. The tool supports targeted web discovery, but it still stops at a tiny human-reviewed packet instead of turning into an autonomous outreach engine.
+LeadOps follows a small, opinionated loop:
+
+1. retrieve a limited set of candidate pages or search results
+2. assess them against your actual fit criteria
+3. rank and cap the output
+4. draft a small daily packet
+5. wait for human review
+
+The design goal is simple:
+
+`surface a few leads you would genuinely want to follow up on`
+
+## Design Principles
+
+- `Precision over volume`
+- `Local-first state`
+- `Human review before send`
+- `Deterministic orchestration`
+- `LLMs for judgment, not control flow`
+- `Small packets instead of giant lists`
 
 ## Install
+
+LeadOps currently targets Python `3.12+`.
 
 ```bash
 python3 -m venv .venv
@@ -39,7 +56,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-If you do not want to install it yet, use the repo-local wrappers:
+You can also use the repo-local wrappers without installing console scripts globally:
 
 ```bash
 ./bin/leadops --help
@@ -50,88 +67,167 @@ If you do not want to install it yet, use the repo-local wrappers:
 Create a workspace:
 
 ```bash
-leadops init-workspace /absolute/path/to/workspace
+leadops init-workspace ~/leadops-workspace
 ```
 
-Add a candidate manually:
+That creates:
+
+- `leadops.toml`
+- `var/leadops.db`
+- `outbox/`
+- `cache/`
+
+Run a simple daily pass with the built-in mock provider:
 
 ```bash
-leadops add-target \
-  --workspace /absolute/path/to/workspace \
-  --kind founder \
-  --name "Example Startup" \
-  --url "https://example.com" \
-  --source "manual" \
-  --notes "Founder-led startup with a beta product and no visible engineering team."
+leadops run-daily --workspace ~/leadops-workspace
 ```
 
-Or ingest a public page directly:
-
-```bash
-leadops ingest-url \
-  --workspace /absolute/path/to/workspace \
-  --kind founder \
-  --url "https://example.com"
-```
-
-Or run a bounded discovery pass and ingest only the strongest candidates it finds:
-
-```bash
-leadops discover-web \
-  --workspace /absolute/path/to/workspace \
-  --kind founder \
-  --query "founder launched beta workflow SaaS no engineering team" \
-  --limit 3
-```
-
-Or use a built-in hyper-aligned track:
-
-```bash
-leadops list-tracks
-
-leadops discover-track \
-  --workspace /absolute/path/to/workspace \
-  --track connectors \
-  --per-query-limit 2
-```
-
-Run the daily pass:
-
-```bash
-leadops run-daily --workspace /absolute/path/to/workspace
-```
-
-You can also run discovery and the packet in one step:
-
-```bash
-leadops run-daily \
-  --workspace /absolute/path/to/workspace \
-  --discover-track daily \
-  --discover-per-query-limit 2
-```
-
-Record review decisions with reasons so future discovery and scoring can learn from them:
-
-```bash
-leadops mark-status \
-  --workspace /absolute/path/to/workspace \
-  12 rejected \
-  --reason "Too advisory and not enough direct build ownership"
-
-leadops feedback-summary --workspace /absolute/path/to/workspace
-```
-
-The daily brief will be written to:
+Review the outputs in:
 
 - `outbox/YYYY-MM-DD/daily-brief.md`
 - `outbox/YYYY-MM-DD/daily-brief.json`
 - `outbox/YYYY-MM-DD/daily-digest.txt`
 
+## Common Commands
+
+```bash
+leadops init-workspace ~/leadops-workspace
+leadops list-tracks
+leadops discover-track --workspace ~/leadops-workspace --track daily --per-query-limit 2
+leadops run-daily --workspace ~/leadops-workspace
+leadops list-targets --workspace ~/leadops-workspace
+leadops mark-status --workspace ~/leadops-workspace 12 approved --reason "Exactly the kind of work I want"
+leadops feedback-summary --workspace ~/leadops-workspace
+```
+
+### Manual Intake
+
+Add a target directly:
+
+```bash
+leadops add-target \
+  --workspace ~/leadops-workspace \
+  --kind founder \
+  --name "Example Startup" \
+  --url "https://example.com" \
+  --source "manual" \
+  --notes "Founder-led team with an early product and no obvious engineering org."
+```
+
+Or ingest a public page:
+
+```bash
+leadops ingest-url \
+  --workspace ~/leadops-workspace \
+  --kind founder \
+  --url "https://example.com"
+```
+
+### Discovery
+
+Run one bounded search:
+
+```bash
+leadops discover-web \
+  --workspace ~/leadops-workspace \
+  --kind founder \
+  --query "founder launched beta workflow SaaS no engineering team" \
+  --limit 3
+```
+
+Or use the built-in tracks:
+
+```bash
+leadops list-tracks
+
+leadops discover-track \
+  --workspace ~/leadops-workspace \
+  --track connectors \
+  --per-query-limit 2
+```
+
+Available tracks currently include:
+
+- `connectors`
+- `founders`
+- `daily`
+
+These tracks are intentionally narrow. The tool is trying to find usable targets, not to build a giant list.
+
+## Provider Setup
+
+LeadOps supports two provider roles:
+
+- `llm`
+  - assessment, ranking rationale, outreach drafting
+- `discovery`
+  - bounded candidate discovery from the public web
+
+Provider modes currently supported:
+
+- `mock`
+- `command`
+- `none` for discovery when disabled
+
+The `command` mode lets you plug in a model-backed adapter that accepts JSON on `stdin` and returns JSON on `stdout`.
+
+## OpenAI Example
+
+LeadOps includes helper scripts for OpenAI-backed assessment and discovery.
+
+Example workspace config:
+
+```toml
+[llm]
+provider = "command"
+command = "leadops-openai-bridge --model gpt-5.4 --reasoning-effort high --max-output-tokens 4000"
+timeout_seconds = 90
+
+[discovery]
+provider = "command"
+command = "leadops-openai-discover --model gpt-5.4 --reasoning-effort low --max-output-tokens 5000"
+timeout_seconds = 180
+```
+
+Then set `OPENAI_API_KEY` in your shell before running discovery or daily curation.
+
+## Status Workflow
+
+Targets move through a small workflow:
+
+- `candidate`
+- `approved`
+- `rejected`
+- `sent`
+- `replied`
+- `snoozed`
+- `archived`
+
+When you include a reason with `mark-status`, recent accepted and avoided patterns are fed back into discovery and assessment prompts.
+
+If you set a future `--followup-date` on a `candidate` or `approved` target, LeadOps treats that as a real snooze and keeps the target out of the daily packet until that date.
+
+Example:
+
+```bash
+leadops mark-status \
+  --workspace ~/leadops-workspace \
+  12 rejected \
+  --reason "Too advisory and not enough direct build ownership"
+
+leadops mark-status \
+  --workspace ~/leadops-workspace \
+  12 candidate \
+  --followup-date 2026-04-16 \
+  --reason "Snooze until next week"
+```
+
 ## Email Digest
 
-LeadOps writes a plain-text digest for every packet. It can also send that digest by SMTP when explicitly configured.
+LeadOps always writes a plain-text digest. It can also send that digest through SMTP.
 
-Example config:
+Example:
 
 ```toml
 [email]
@@ -150,172 +246,68 @@ Send a previously generated digest:
 
 ```bash
 leadops send-digest \
-  --workspace /absolute/path/to/workspace \
+  --workspace ~/leadops-workspace \
   --date 2026-04-08
 ```
 
-Or send it directly after a packet run:
+Or send it directly after a run:
 
 ```bash
 leadops run-daily \
-  --workspace /absolute/path/to/workspace \
+  --workspace ~/leadops-workspace \
   --send-digest
 ```
 
 ## Scheduling
 
-On macOS, LeadOps can generate and install a `launchd` agent for a morning daily run.
+On macOS, LeadOps can generate and install a `launchd` job for a daily run.
 
 Preview the plist:
 
 ```bash
-leadops print-launchd \
-  --workspace /absolute/path/to/workspace
+leadops print-launchd --workspace ~/leadops-workspace
 ```
 
-Install the default daily agent:
+Install the default job:
 
 ```bash
-leadops install-launchd \
-  --workspace /absolute/path/to/workspace
+leadops install-launchd --workspace ~/leadops-workspace
 ```
 
-Defaults:
+Current defaults:
 
-- label: `com.choey.leadops.daily`
+- label: `dev.leadops.daily`
 - time: `08:00` local time
-- discovery tracks: `connectors` and `founders`
+- tracks: `connectors` and `founders`
 - per-query limit: `2`
-- digest sending: enabled
+- digest send: enabled
 
-The scheduled job runs the repo-local `bin/leadops-daily` wrapper, which sources `~/.zprofile` before executing `run-daily`. That keeps your API key and SMTP password available to the scheduled run.
+## Development
 
-## Provider Contract
+Run the test suite:
 
-LeadOps supports two assessment provider modes:
-
-- `mock`: local heuristic scoring for offline development
-- `command`: run an external command that accepts JSON on `stdin` and returns JSON on `stdout`
-
-The `command` mode is the integration point for GPT-backed assessment and drafting.
-
-The provider receives a payload like:
-
-```json
-{
-  "profile": {
-    "offer": "Independent product engineer helping founders...",
-    "hard_rejects": ["staff augmentation", "employment-style work"]
-  },
-  "target": {
-    "id": 12,
-    "kind": "founder",
-    "name": "Example Startup",
-    "url": "https://example.com",
-    "source": "manual",
-    "notes": "Founder-led startup with beta product..."
-  }
-}
+```bash
+python3 -B -m unittest discover -s tests -v
 ```
 
-The provider must return JSON matching the shape documented in `src/leadops/models.py`.
+The repo is intentionally small. If you change behavior, keep the public docs and CLI help aligned with the code.
 
-## Discovery Contract
+## Project Status
 
-Bounded discovery is configured separately from daily assessment.
+LeadOps is still early. The current focus is on:
 
-The discovery command receives a payload like:
+- stronger discovery quality
+- better ranking from human feedback
+- cleaner review packets
+- reliable local operation
 
-```json
-{
-  "profile": {
-    "offer": "Independent product engineer helping founders...",
-    "hard_rejects": ["staff augmentation", "employment-style work"]
-  },
-  "search": {
-    "kind": "founder",
-    "query": "founder launched beta workflow SaaS no engineering team",
-    "limit": 3
-  }
-}
-```
+## Non-Goals
 
-It must return JSON with a top-level `candidates` array matching the discovery types in `src/leadops/models.py`.
+LeadOps should not drift into:
 
-## Built-In Discovery Tracks
-
-LeadOps now ships with a few query families for repeatable high-precision discovery:
-
-- `connectors`
-  - founder-facing product design and UX studios
-  - brand/web studios likely to stop before engineering
-- `founders`
-  - very early product or waitlist-stage founders
-  - prototype and early-access teams that look closer to build work than maintenance
-- `daily`
-  - one compact mixed track for a single daily pass
-
-The tracks are intentionally narrow. They are meant to produce a few usable leads, not a giant list.
-
-### OpenAI Bridge
-
-If you want to use OpenAI directly without writing your own bridge, set the workspace config to:
-
-```toml
-[llm]
-provider = "command"
-command = "leadops-openai-bridge --model gpt-5.4 --reasoning-effort high --max-output-tokens 4000"
-timeout_seconds = 90
-```
-
-For discovery, add:
-
-```toml
-[discovery]
-provider = "command"
-command = "leadops-openai-discover --model gpt-5.4 --reasoning-effort low --max-output-tokens 5000"
-timeout_seconds = 180
-```
-
-Then set `OPENAI_API_KEY` before running `leadops discover-web` or `leadops run-daily`.
-
-The bridges use the Responses API with structured JSON output so the model is constrained to the LeadOps assessment and discovery schemas. The discovery bridge also enables OpenAI web search, so the model can search the public web before returning candidates.
-
-`gpt-5.4` is the recommended first live model for this tool because the official model docs say:
-
-- if you are not sure where to start, use `gpt-5.4`
-- `gpt-5.4` supports structured outputs
-- `gpt-5.4-pro` does not support structured outputs and may take several minutes to finish
-
-If you installed LeadOps with `pip install -e .`, the helper bridges are also available as console scripts:
-
-- `leadops-openai-bridge`
-- `leadops-openai-discover`
-
-## Status Workflow
-
-Supported target statuses:
-
-- `candidate`
-- `approved`
-- `rejected`
-- `sent`
-- `replied`
-- `snoozed`
-- `archived`
-
-The daily pass only surfaces:
-
-- eligible new candidates
-- follow-ups due today or earlier
-
-When you use `mark-status --reason`, LeadOps carries those recent liked and avoided patterns back into both discovery and assessment prompts. That keeps the packet biased toward what you actually want instead of just what looks startup-shaped.
-
-## Next Steps
-
-Planned next layers:
-
-- dossier assembly across multiple pages
-- follow-up draft specialization
-- richer rejection-reason handling in ranking
-- delivery options beyond SMTP
+- autonomous outreach
+- automatic sending or posting by default
+- generic CRM bloat
+- “growth hacking” features
+- unbounded scraping or spam automation
+- a full web app unless the CLI model clearly stops being enough

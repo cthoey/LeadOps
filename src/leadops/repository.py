@@ -187,16 +187,29 @@ class Repository:
         )
         self.conn.commit()
 
-    def list_candidate_targets(self) -> list[TargetRecord]:
-        rows = self.conn.execute(
-            """
-            SELECT id, kind, name, COALESCE(url, '') AS url, source, notes, raw_evidence,
-                   status, domain, dedupe_key, last_packeted_at, next_followup_at
-            FROM targets
-            WHERE status IN ('candidate', 'approved')
-            ORDER BY created_at ASC
-            """
-        ).fetchall()
+    def list_candidate_targets(self, on_or_before: str | None = None) -> list[TargetRecord]:
+        if on_or_before is None:
+            rows = self.conn.execute(
+                """
+                SELECT id, kind, name, COALESCE(url, '') AS url, source, notes, raw_evidence,
+                       status, domain, dedupe_key, last_packeted_at, next_followup_at
+                FROM targets
+                WHERE status IN ('candidate', 'approved')
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, kind, name, COALESCE(url, '') AS url, source, notes, raw_evidence,
+                       status, domain, dedupe_key, last_packeted_at, next_followup_at
+                FROM targets
+                WHERE status IN ('candidate', 'approved')
+                  AND (next_followup_at IS NULL OR next_followup_at <= ?)
+                ORDER BY created_at ASC
+                """,
+                (on_or_before,),
+            ).fetchall()
         return [self._row_to_target(row) for row in rows]
 
     def list_due_followups(self, on_or_before: str) -> list[TargetRecord]:

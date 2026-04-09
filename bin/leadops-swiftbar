@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+if [[ -f "$HOME/.zprofile" ]]; then
+  # shellcheck disable=SC1090
+  source "$HOME/.zprofile"
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  leadops-swiftbar run-daily <workspace> [run-daily args...]
+  leadops-swiftbar send-digest <workspace> <date>
+  leadops-swiftbar mark-status <workspace> <target_id> <status> [extra args...]
+EOF
+  exit 2
+}
+
+if [[ $# -lt 2 ]]; then
+  usage
+fi
+
+action="$1"
+shift
+workspace="$1"
+shift
+
+log_dir="$workspace/var/log"
+mkdir -p "$log_dir"
+
+case "$action" in
+  run-daily)
+    "$ROOT/bin/leadops-daily" "$workspace" "$@" >>"$log_dir/manual-run.log" 2>&1 &
+    sleep 1
+    ;;
+  send-digest)
+    if [[ $# -lt 1 ]]; then
+      usage
+    fi
+    packet_date="$1"
+    shift
+    python3 -m leadops send-digest --workspace "$workspace" --date "$packet_date" "$@" >>"$log_dir/manual-digest.log" 2>&1 &
+    sleep 1
+    ;;
+  mark-status)
+    if [[ $# -lt 2 ]]; then
+      usage
+    fi
+    target_id="$1"
+    status="$2"
+    shift 2
+    exec python3 -m leadops mark-status --workspace "$workspace" "$target_id" "$status" "$@"
+    ;;
+  *)
+    usage
+    ;;
+esac

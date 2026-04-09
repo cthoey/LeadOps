@@ -133,7 +133,9 @@ def _item_to_dict(item: BriefItem) -> dict:
             "name": item.target.name,
             "url": item.target.url,
             "source": item.target.source,
+            "status": item.target.status,
             "notes": item.target.notes,
+            "next_followup_at": item.target.next_followup_at,
         },
         "assessment": item.assessment.as_dict(),
     }

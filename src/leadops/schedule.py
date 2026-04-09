@@ -7,7 +7,7 @@ import plistlib
 import subprocess
 
 
-DEFAULT_LABEL = "com.choey.leadops.daily"
+DEFAULT_LABEL = "dev.leadops.daily"
 
 
 @dataclass(frozen=True, slots=True)
