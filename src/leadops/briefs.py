@@ -144,12 +144,17 @@ def write_packet(
     followup_items: list[BriefItem],
     *,
     approach: ApproachSpec | None = None,
+    version: int,
 ) -> tuple[Path, Path, Path, Path]:
     packet_dir.mkdir(parents=True, exist_ok=True)
-    markdown_path = packet_dir / "daily-brief.md"
-    json_path = packet_dir / "daily-brief.json"
-    digest_path = packet_dir / "daily-digest.txt"
-    digest_html_path = packet_dir / "daily-digest.html"
+    markdown_path = packet_dir / f"daily-brief.v{version}.md"
+    json_path = packet_dir / f"daily-brief.v{version}.json"
+    digest_path = packet_dir / f"daily-digest.v{version}.txt"
+    digest_html_path = packet_dir / f"daily-digest.v{version}.html"
+    latest_markdown_path = packet_dir / "daily-brief.md"
+    latest_json_path = packet_dir / "daily-brief.json"
+    latest_digest_path = packet_dir / "daily-digest.txt"
+    latest_digest_html_path = packet_dir / "daily-digest.html"
 
     markdown = render_markdown(packet_date, new_items, followup_items, approach=approach)
     digest_text = render_email_text(packet_date, new_items, followup_items, approach=approach)
@@ -158,6 +163,7 @@ def write_packet(
         "packet_date": packet_date,
         "run_context": {
             "approach": approach.as_payload() if approach else None,
+            "packet_version": version,
         },
         "new_targets": [_item_to_dict(item) for item in new_items],
         "followups_due": [_item_to_dict(item) for item in followup_items],
@@ -167,6 +173,10 @@ def write_packet(
     write_text(json_path, json.dumps(payload, indent=2) + "\n")
     write_text(digest_path, digest_text)
     write_text(digest_html_path, digest_html)
+    write_text(latest_markdown_path, markdown)
+    write_text(latest_json_path, json.dumps(payload, indent=2) + "\n")
+    write_text(latest_digest_path, digest_text)
+    write_text(latest_digest_html_path, digest_html)
     return markdown_path, json_path, digest_path, digest_html_path
 
 

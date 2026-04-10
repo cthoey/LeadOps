@@ -6,7 +6,7 @@ from pathlib import Path
 
 from leadops.approaches import ApproachSpec, get_approach, list_approaches
 from leadops.briefs import BriefItem, render_email_html, render_email_subject
-from leadops.config import initialize_workspace, load_workspace_config
+from leadops.config import config_path, initialize_workspace, load_workspace_config
 from leadops.daily import run_daily
 from leadops.db import connect, initialize_database
 from leadops.discovery import DiscoveryTrackResult, discover_track, discover_web
@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "discover-web":
         workspace = Path(args.workspace).expanduser().resolve()
-        config = load_workspace_config(workspace)
+        config = _load_existing_workspace_config(workspace)
         repo = _repo_for_workspace(workspace)
         approach = get_approach(args.approach) if args.approach else None
         result = discover_web(
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "discover-track":
         workspace = Path(args.workspace).expanduser().resolve()
-        config = load_workspace_config(workspace)
+        config = _load_existing_workspace_config(workspace)
         repo = _repo_for_workspace(workspace)
         approach = get_approach(args.approach) if hasattr(args, "approach") and args.approach else None
         result = discover_track(
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "discover-approach":
         workspace = Path(args.workspace).expanduser().resolve()
-        config = load_workspace_config(workspace)
+        config = _load_existing_workspace_config(workspace)
         repo = _repo_for_workspace(workspace)
         approach = get_approach(args.approach)
         result = _run_approach_discovery(
@@ -284,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run-daily":
         workspace = Path(args.workspace).expanduser().resolve()
-        config = load_workspace_config(workspace)
+        config = _load_existing_workspace_config(workspace)
         repo = _repo_for_workspace(workspace)
         explicit_approach = bool(args.approach)
         approach = get_approach(args.approach) if args.approach else get_approach("builder_need")
@@ -356,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "send-digest":
         workspace = Path(args.workspace).expanduser().resolve()
-        config = load_workspace_config(workspace)
+        config = _load_existing_workspace_config(workspace)
         packet_dir = config.outbox_dir / args.date
         digest_path = packet_dir / "daily-digest.txt"
         digest_html_path = packet_dir / "daily-digest.html"
@@ -402,10 +402,20 @@ def main(argv: list[str] | None = None) -> int:
 
 def _repo_for_workspace(workspace: Path) -> Repository:
     workspace = workspace.expanduser().resolve()
-    initialize_workspace(workspace)
-    config = load_workspace_config(workspace)
+    config = _load_existing_workspace_config(workspace)
     initialize_database(config.database_path)
     return Repository(connect(config.database_path))
+
+
+def _load_existing_workspace_config(workspace: Path):
+    workspace = workspace.expanduser().resolve()
+    try:
+        return load_workspace_config(workspace)
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            f"Missing workspace config: {config_path(workspace)}. "
+            f"Run `leadops init-workspace {workspace}` first."
+        ) from exc
 
 
 def _print_track_result(result: DiscoveryTrackResult) -> None:
@@ -566,6 +576,7 @@ def _add_launchd_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _launchd_spec_from_args(args: argparse.Namespace) -> LaunchdSpec:
     workspace = Path(args.workspace).expanduser().resolve()
+    _load_existing_workspace_config(workspace)
     repo_root = Path(__file__).resolve().parents[2]
     logs_dir = workspace / "var" / "log"
     label = str(args.label).strip() or DEFAULT_LABEL

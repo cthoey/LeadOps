@@ -17,6 +17,7 @@ from leadops.db import connect, initialize_database
 from leadops.discovery import discover_track, discover_web
 from leadops.extract import extract_from_html
 from leadops.mailer import send_email_digest
+from leadops.models import DiscoveryBatch, DiscoveryCandidate
 from leadops.query_plans import get_track
 from leadops.repository import Repository
 from leadops.schedule import LaunchdSpec, build_program_arguments, render_launchd_plist
@@ -81,6 +82,71 @@ class LeadOpsTests(unittest.TestCase):
             self.assertIn("<!doctype html>", digest_html)
             self.assertIn("summary-card", digest_html)
             self.assertIn("Example Startup", digest_html)
+
+    def test_run_daily_send_digest_failure_does_not_advance_packet_state(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            target_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Digest Failure Startup",
+                url="https://digest-failure.example",
+                source="manual",
+                notes="Founder-led prototype with roadmap pressure and no engineering team.",
+            )
+
+            with patch("leadops.daily.send_email_digest", side_effect=RuntimeError("smtp down")):
+                with self.assertRaisesRegex(RuntimeError, "smtp down"):
+                    run_daily(repo, config, "2026-04-10", send_digest=True)
+
+            target = next(item for item in repo.list_targets() if item.id == target_id)
+            self.assertIsNone(target.last_packeted_at)
+            run_row = repo.conn.execute("SELECT status FROM daily_runs ORDER BY id DESC LIMIT 1").fetchone()
+            packet_count_row = repo.conn.execute("SELECT COUNT(*) AS count FROM review_packets").fetchone()
+            review_item_count_row = repo.conn.execute("SELECT COUNT(*) AS count FROM review_items").fetchone()
+            self.assertEqual(run_row["status"], "failed")
+            self.assertEqual(int(packet_count_row["count"]), 0)
+            self.assertEqual(int(review_item_count_row["count"]), 0)
+
+    def test_run_daily_preserves_same_day_packet_versions(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="founder",
+                name="First Same Day Startup",
+                url="https://first-same-day.example",
+                source="manual",
+                notes="Founder-led prototype with roadmap pressure and no engineering team.",
+            )
+
+            first_result = run_daily(repo, config, "2026-04-10")
+
+            repo.add_or_update_target(
+                kind="founder",
+                name="Second Same Day Startup",
+                url="https://second-same-day.example",
+                source="manual",
+                notes="Founder-led MVP with launch pressure and no visible engineering team.",
+            )
+
+            second_result = run_daily(repo, config, "2026-04-10")
+
+            packet_rows = repo.conn.execute(
+                "SELECT version, markdown_path, json_path FROM review_packets ORDER BY version ASC"
+            ).fetchall()
+            self.assertEqual([int(row["version"]) for row in packet_rows], [1, 2])
+            self.assertTrue(str(first_result.packet_markdown).endswith("daily-brief.v1.md"))
+            self.assertTrue(str(second_result.packet_markdown).endswith("daily-brief.v2.md"))
+            self.assertNotEqual(packet_rows[0]["markdown_path"], packet_rows[1]["markdown_path"])
+            self.assertIn("First Same Day Startup", Path(packet_rows[0]["json_path"]).read_text(encoding="utf-8"))
+            self.assertIn("Second Same Day Startup", Path(packet_rows[1]["json_path"]).read_text(encoding="utf-8"))
+
+            latest_payload = json.loads((workspace / "outbox" / "2026-04-10" / "daily-brief.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest_payload["run_context"]["packet_version"], 2)
+            self.assertIn("Second Same Day Startup", json.dumps(latest_payload))
 
     def test_send_email_digest_uses_smtp(self) -> None:
         email_config = EmailConfig(
@@ -274,6 +340,16 @@ timeout_seconds = 30
             self.assertEqual(payload["run_context"]["approach"]["name"], "builder_need")
             self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
 
+    def test_cli_requires_existing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            missing_workspace = Path(tmp) / "missing-workspace"
+
+            with self.assertRaises(SystemExit) as exc:
+                cli_main(["list-targets", "--workspace", str(missing_workspace)])
+
+            self.assertIn("Missing workspace config", str(exc.exception))
+            self.assertIn("init-workspace", str(exc.exception))
+
     def test_feedback_context_payload_groups_recent_liked_and_avoided(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
@@ -442,6 +518,72 @@ timeout_seconds = 30
             self.assertEqual(result.total_candidates, 3)
             self.assertEqual(result.total_created, 2)
             self.assertEqual(result.total_updated, 1)
+
+    def test_discover_web_caps_provider_results_to_requested_limit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Candidate One",
+                        url="https://candidate-one.example",
+                        confidence=0.9,
+                        fit_score=90,
+                        why_fit="Strong fit one.",
+                        why_now="Strong signal one.",
+                    ),
+                    DiscoveryCandidate(
+                        name="Candidate Two",
+                        url="https://candidate-two.example",
+                        confidence=0.8,
+                        fit_score=80,
+                        why_fit="Strong fit two.",
+                        why_now="Strong signal two.",
+                    ),
+                ],
+                raw_response={"id": "fake-over-limit"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder prototype launch-ready web app",
+                    kind="founder",
+                    limit=1,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.total_candidates, 1)
+            self.assertEqual(result.created, 1)
+            self.assertEqual(len(repo.list_targets()), 1)
+            query_row = repo.conn.execute("SELECT notes FROM query_runs ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertIn("truncated=true", str(query_row["notes"]))
 
     def test_candidate_snooze_hides_until_due_date(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:

@@ -91,6 +91,8 @@ Review the outputs in:
 - `outbox/YYYY-MM-DD/daily-digest.txt`
 - `outbox/YYYY-MM-DD/daily-digest.html`
 
+Those filenames always point at the latest packet for that date. If you rerun the same date more than once, LeadOps also keeps versioned snapshots alongside them, such as `daily-brief.v2.md`.
+
 ## Common Commands
 
 ```bash

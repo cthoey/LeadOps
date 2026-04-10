@@ -65,23 +65,15 @@ def run_daily(
         )
 
         packet_dir = config.outbox_dir / packet_date
+        packet_version = repo.next_packet_version(packet_date)
         markdown_path, json_path, digest_path, digest_html_path = write_packet(
-            packet_dir, packet_date, candidate_items, followup_items, approach=approach
+            packet_dir,
+            packet_date,
+            candidate_items,
+            followup_items,
+            approach=approach,
+            version=packet_version,
         )
-        packet_id = repo.create_packet(run_id, packet_date, markdown_path, json_path)
-
-        for item in candidate_items + followup_items:
-            assessment_id = repo.save_assessment(run_id, item.target.id, provider.name, item.assessment)
-            repo.add_packet_item(
-                packet_id=packet_id,
-                target_id=item.target.id,
-                assessment_id=assessment_id,
-                section=item.section,
-                rank_index=item.rank_index,
-                score=item.assessment.fit_score,
-                confidence=item.assessment.confidence,
-            )
-            repo.mark_packeted(item.target.id, packet_date)
 
         notes.append(f"new_targets={len(candidate_items)}")
         notes.append(f"followups_due={len(followup_items)}")
@@ -97,6 +89,20 @@ def run_daily(
             )
             digest_sent = True
             notes.append("digest_sent=true")
+        packet_id = repo.create_packet(run_id, packet_date, markdown_path, json_path, version=packet_version)
+
+        for item in candidate_items + followup_items:
+            assessment_id = repo.save_assessment(run_id, item.target.id, provider.name, item.assessment)
+            repo.add_packet_item(
+                packet_id=packet_id,
+                target_id=item.target.id,
+                assessment_id=assessment_id,
+                section=item.section,
+                rank_index=item.rank_index,
+                score=item.assessment.fit_score,
+                confidence=item.assessment.confidence,
+            )
+            repo.mark_packeted(item.target.id, packet_date)
         repo.finish_run(run_id, status="done", notes=", ".join(notes))
         return DailyRunResult(
             packet_markdown=markdown_path,

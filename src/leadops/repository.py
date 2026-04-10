@@ -269,8 +269,20 @@ class Repository:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def create_packet(self, run_id: int, packet_date: str, markdown_path: Path, json_path: Path) -> int:
-        version = self._next_packet_version(packet_date)
+    def next_packet_version(self, packet_date: str) -> int:
+        return self._next_packet_version(packet_date)
+
+    def create_packet(
+        self,
+        run_id: int,
+        packet_date: str,
+        markdown_path: Path,
+        json_path: Path,
+        *,
+        version: int | None = None,
+    ) -> int:
+        if version is None:
+            version = self._next_packet_version(packet_date)
         cur = self.conn.execute(
             """
             INSERT INTO review_packets (run_id, packet_date, version, markdown_path, json_path, created_at)

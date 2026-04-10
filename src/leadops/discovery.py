@@ -81,9 +81,10 @@ def discover_web(
 
     try:
         batch = _discover_with_command(config, payload)
+        candidates = batch.candidates[: max(1, limit)]
         created = 0
         updated = 0
-        for candidate in batch.candidates:
+        for candidate in candidates:
             target_id, action = repo.add_or_update_target(
                 kind=kind,
                 name=candidate.name,
@@ -103,17 +104,20 @@ def discover_web(
             else:
                 updated += 1
 
+        notes = f"candidates={len(candidates)} created={created} updated={updated}"
+        if len(batch.candidates) > len(candidates):
+            notes += f" provider_candidates={len(batch.candidates)} truncated=true"
         repo.finish_query_run(
             query_run_id,
             status="done",
-            notes=f"candidates={len(batch.candidates)} created={created} updated={updated}",
+            notes=notes,
             raw_json=json.dumps(batch.raw_response, indent=2),
         )
         return DiscoveryRunResult(
             query_run_id=query_run_id,
             created=created,
             updated=updated,
-            total_candidates=len(batch.candidates),
+            total_candidates=len(candidates),
         )
     except Exception as exc:
         repo.finish_query_run(query_run_id, status="failed", notes=str(exc))
