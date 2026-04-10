@@ -9,7 +9,7 @@ import tomllib
 DEFAULT_CONFIG = """\
 [profile]
 name = "Your Practice"
-offer = "Independent product engineer helping founders and very small teams turn ideas, roadmaps, and rough prototypes into launch-ready customer-facing web apps."
+offer = "Independent product engineer helping founders and very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps."
 daily_new_lead_cap = 5
 daily_followup_cap = 5
 cooldown_days = 21

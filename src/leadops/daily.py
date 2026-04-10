@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from leadops.approaches import ApproachSpec
 from leadops.briefs import BriefItem, render_email_subject, write_packet
 from leadops.config import WorkspaceConfig
 from leadops.mailer import send_email_digest
@@ -17,6 +18,7 @@ class DailyRunResult:
     packet_markdown: Path
     packet_json: Path
     digest_text: Path
+    digest_html: Path
     surfaced_new: int
     surfaced_followups: int
     packet_id: int
@@ -29,6 +31,7 @@ def run_daily(
     config: WorkspaceConfig,
     packet_date: str,
     *,
+    approach: ApproachSpec | None = None,
     send_digest: bool = False,
 ) -> DailyRunResult:
     provider = _provider_for_config(config)
@@ -47,6 +50,7 @@ def run_daily(
             cooldown_cutoff=cooldown_cutoff,
             daily_cap=config.profile.daily_new_lead_cap,
             section="new_target",
+            approach=approach,
             feedback_context=feedback_context,
         )
         followup_items = _assess_followups(
@@ -56,11 +60,14 @@ def run_daily(
             config=config,
             run_id=run_id,
             daily_cap=config.profile.daily_followup_cap,
+            approach=approach,
             feedback_context=feedback_context,
         )
 
         packet_dir = config.outbox_dir / packet_date
-        markdown_path, json_path, digest_path = write_packet(packet_dir, packet_date, candidate_items, followup_items)
+        markdown_path, json_path, digest_path, digest_html_path = write_packet(
+            packet_dir, packet_date, candidate_items, followup_items, approach=approach
+        )
         packet_id = repo.create_packet(run_id, packet_date, markdown_path, json_path)
 
         for item in candidate_items + followup_items:
@@ -78,12 +85,15 @@ def run_daily(
 
         notes.append(f"new_targets={len(candidate_items)}")
         notes.append(f"followups_due={len(followup_items)}")
+        if approach:
+            notes.append(f"approach={approach.name}")
         digest_sent = False
         if send_digest or config.email.send_on_run:
             send_email_digest(
                 email_config=config.email,
                 subject=render_email_subject(packet_date, candidate_items, followup_items),
-                body=digest_path.read_text(encoding="utf-8"),
+                body_text=digest_path.read_text(encoding="utf-8"),
+                body_html=digest_html_path.read_text(encoding="utf-8"),
             )
             digest_sent = True
             notes.append("digest_sent=true")
@@ -92,6 +102,7 @@ def run_daily(
             packet_markdown=markdown_path,
             packet_json=json_path,
             digest_text=digest_path,
+            digest_html=digest_html_path,
             surfaced_new=len(candidate_items),
             surfaced_followups=len(followup_items),
             packet_id=packet_id,
@@ -113,22 +124,24 @@ def _assess_candidates(
     cooldown_cutoff: str,
     daily_cap: int,
     section: str,
+    approach: ApproachSpec | None,
     feedback_context: dict[str, list[dict[str, str]]],
 ) -> list[BriefItem]:
     eligible: list[tuple[TargetRecord, AssessmentResult]] = []
     for target in targets:
         if target.last_packeted_at and target.last_packeted_at > cooldown_cutoff:
             continue
-        assessment = provider.assess(target, config, feedback_context)
-        if not assessment.recommend:
+        assessment = provider.assess(target, config, approach, feedback_context)
+        if not assessment.recommend or not assessment.rubric.gates_pass(kind=target.kind):
             repo.save_assessment(run_id, target.id, provider.name, assessment)
             continue
         eligible.append((target, assessment))
 
     eligible.sort(key=lambda item: (item[1].fit_score, item[1].confidence), reverse=True)
+    selected = _select_candidates_for_packet(eligible, daily_cap=daily_cap, approach=approach)
     return [
         BriefItem(target=target, assessment=assessment, section=section, rank_index=index)
-        for index, (target, assessment) in enumerate(eligible[:daily_cap], start=1)
+        for index, (target, assessment) in enumerate(selected, start=1)
     ]
 
 
@@ -140,11 +153,12 @@ def _assess_followups(
     config: WorkspaceConfig,
     run_id: int,
     daily_cap: int,
+    approach: ApproachSpec | None,
     feedback_context: dict[str, list[dict[str, str]]],
 ) -> list[BriefItem]:
     items: list[tuple[TargetRecord, AssessmentResult]] = []
     for target in targets:
-        assessment = provider.assess(target, config, feedback_context)
+        assessment = provider.assess(target, config, approach, feedback_context)
         assessment.why_now = "This follow-up is already due or overdue."
         assessment.draft_subject = f"Following up on {target.name}"
         items.append((target, assessment))
@@ -159,3 +173,46 @@ def _provider_for_config(config: WorkspaceConfig) -> CommandProvider | MockProvi
     if config.llm.provider == "command":
         return CommandProvider()
     return MockProvider()
+
+
+def _select_candidates_for_packet(
+    eligible: list[tuple[TargetRecord, AssessmentResult]],
+    *,
+    daily_cap: int,
+    approach: ApproachSpec | None,
+) -> list[tuple[TargetRecord, AssessmentResult]]:
+    if not approach or not approach.packet_kind_caps:
+        return eligible[:daily_cap]
+
+    selected: list[tuple[TargetRecord, AssessmentResult]] = []
+    selected_ids: set[int] = set()
+    per_kind: dict[str, int] = {}
+
+    for kind in approach.packet_kind_order:
+        kind_cap = approach.packet_kind_caps.get(kind)
+        if kind_cap is None:
+            continue
+        for target, assessment in eligible:
+            if len(selected) >= daily_cap:
+                break
+            if target.id in selected_ids or target.kind != kind:
+                continue
+            if per_kind.get(kind, 0) >= kind_cap:
+                continue
+            selected.append((target, assessment))
+            selected_ids.add(target.id)
+            per_kind[kind] = per_kind.get(kind, 0) + 1
+
+    for target, assessment in eligible:
+        if len(selected) >= daily_cap:
+            break
+        if target.id in selected_ids:
+            continue
+        kind_cap = approach.packet_kind_caps.get(target.kind)
+        if kind_cap is not None and per_kind.get(target.kind, 0) >= kind_cap:
+            continue
+        selected.append((target, assessment))
+        selected_ids.add(target.id)
+        per_kind[target.kind] = per_kind.get(target.kind, 0) + 1
+
+    return selected

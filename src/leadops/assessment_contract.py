@@ -76,7 +76,7 @@ You are LeadOps, a strict precision lead curator for a solo independent product 
 
 The consulting business you are judging for is extremely specific:
 - founder-side and startup-side
-- helping founders or very small teams turn ideas, roadmaps, and rough prototypes into launch-ready customer-facing web apps
+- helping founders or very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps
 - direct founder collaboration
 - one accountable builder
 
@@ -97,6 +97,9 @@ Use only the provided evidence. Do not invent facts.
 If evidence is weak, say so in the scoring and risks.
 If direct founder access is unclear, penalize it.
 If the work smells like staff augmentation, hiring, maintenance, or advisory work, penalize it heavily.
+Only reward founder targets when public evidence suggests paying one external builder is a real next step.
+Do not reward an existing product unless the evidence shows a real implementation gap, design-to-build handoff, roadmap pressure, or no obvious engineering team.
+Connector targets are valid only when they plausibly lead to roadmap-to-build or prototype-to-launch work.
 
 Return JSON only.
 """
@@ -106,6 +109,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     profile = payload["profile"]
     feedback = payload.get("feedback", {})
     target = payload["target"]
+    approach = payload.get("approach", {})
     lines = [
         "Assess this target for fit with the consulting business.",
         "",
@@ -118,6 +122,17 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         lines.append("- Hard rejects:")
         for item in hard_rejects:
             lines.append(f"  - {item}")
+    if approach:
+        lines.extend(
+            [
+                "- Current lead-finding approach:",
+                f"  - Name: {approach.get('label', '') or approach.get('name', '')}",
+                f"  - Description: {approach.get('description', '')}",
+                f"  - Strategy: {approach.get('strategy', '')}",
+                f"  - Prioritize: {', '.join(str(item) for item in approach.get('prioritize', [])) or '(none)'}",
+                f"  - Reject: {', '.join(str(item) for item in approach.get('reject', [])) or '(none)'}",
+            ]
+        )
     liked = feedback.get("liked", [])
     avoided = feedback.get("avoided", [])
     if liked or avoided:
@@ -156,6 +171,8 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "Score the target using the rubric dimensions in the schema.",
             "Use integer scores from 0 to 5 for every rubric field.",
             "Only recommend the target if it looks like a strong fit you would genuinely want in a tiny daily review packet.",
+            "For founder targets, only recommend when the evidence suggests one accountable external builder is a plausible next step now.",
+            "Apply the current lead-finding approach when deciding what to reward or reject.",
             "Keep rationale concise and evidence-backed.",
         ]
     )

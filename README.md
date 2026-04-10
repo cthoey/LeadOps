@@ -16,11 +16,12 @@ It is intentionally not:
 - keeps pipeline state locally in SQLite
 - dedupes targets across days and sources
 - runs bounded web discovery
+- supports named lead-finding approaches
 - supports repeatable discovery tracks
 - uses structured LLM assessment and drafting
 - learns from approve / reject / snooze decisions
-- writes a dated daily brief and plain-text digest
-- can send that digest by SMTP
+- writes a dated daily brief plus text and HTML digests
+- can send those digests as a multipart SMTP email
 - can install a macOS `launchd` job for a daily run
 
 ## How It Works
@@ -88,13 +89,18 @@ Review the outputs in:
 - `outbox/YYYY-MM-DD/daily-brief.md`
 - `outbox/YYYY-MM-DD/daily-brief.json`
 - `outbox/YYYY-MM-DD/daily-digest.txt`
+- `outbox/YYYY-MM-DD/daily-digest.html`
 
 ## Common Commands
 
 ```bash
 leadops init-workspace ~/leadops-workspace
+leadops list-approaches
 leadops list-tracks
+# Founder Needs Builder
+leadops discover-approach --workspace ~/leadops-workspace --approach builder_need
 leadops discover-track --workspace ~/leadops-workspace --track daily --per-query-limit 2
+# Default daily stance is Founder Needs Builder
 leadops run-daily --workspace ~/leadops-workspace
 leadops list-targets --workspace ~/leadops-workspace
 leadops mark-status --workspace ~/leadops-workspace 12 approved --reason "Exactly the kind of work I want"
@@ -132,7 +138,7 @@ Run one bounded search:
 leadops discover-web \
   --workspace ~/leadops-workspace \
   --kind founder \
-  --query "founder launched beta workflow SaaS no engineering team" \
+  --query "founder roadmap prototype no engineering team product build" \
   --limit 3
 ```
 
@@ -147,13 +153,107 @@ leadops discover-track \
   --per-query-limit 2
 ```
 
+Or use a built-in approach:
+
+```bash
+leadops list-approaches
+
+# Founder Needs Builder
+leadops discover-approach \
+  --workspace ~/leadops-workspace \
+  --approach builder_need
+
+# Public Founder Asks
+leadops run-daily \
+  --workspace ~/leadops-workspace \
+  --approach place_watch
+```
+
 Available tracks currently include:
 
 - `connectors`
 - `founders`
+- `builder_need`
+- `place_watch`
 - `daily`
 
 These tracks are intentionally narrow. The tool is trying to find usable targets, not to build a giant list.
+
+## Lead-Finding Approaches
+
+LeadOps keeps the business profile fixed and lets you vary the search strategy.
+
+In other words:
+
+- the `profile` answers: who are you trying to work with?
+- the `approach` answers: how are you trying to find them?
+
+This keeps the feature small. It is not a multi-ICP engine. It is a way to test different lead-finding strategies for the same business.
+
+### `Founder + Connector Mix` (`early_product`)
+
+Best for the broadest aligned search.
+
+Strategy:
+
+- search both founder-adjacent connectors and founder-side roadmap/prototype transitions
+- accept existing products only when they still show a real implementation transition
+- favor roadmap-to-build and prototype-to-launch work over maintenance or hiring
+
+Use it when:
+
+- you want the current balanced motion
+- you still want connectors in the mix
+- you want a wider pool without abandoning precision
+
+### `Founder Needs Builder` (`builder_need`)
+
+Best for the narrowest direct-fit search.
+
+Strategy:
+
+- look for a real product idea, roadmap, or prototype plus visible evidence of a build gap
+- heavily discount already-live products that do not also show a next-phase ownership need
+- prefer tiny teams with no obvious engineering depth
+- bias the packet toward founders first, with only a small number of connectors
+
+Use it when:
+
+- you want fewer, harsher direct-founder candidates
+- you care more about visible builder need than general early-product similarity
+- you want the packet to feel closer to “they may actually need me now”
+
+### `Public Founder Asks` (`place_watch`)
+
+Best for monitoring explicit asks on specific public surfaces.
+
+Strategy:
+
+- watch a few places where founders sometimes publicly ask for help turning a roadmap, prototype, or rough product into something real
+- favor freshness and direct asks
+- reject cofounder, hiring, equity-only, or role-fill opportunities aggressively
+
+Use it when:
+
+- you want to test a time-sensitive monitoring strategy
+- you want explicit need signals, even if the channel is noisier
+
+### Feature Strategy
+
+The point of approaches is experimentation.
+
+LeadOps should help you answer:
+
+- which search strategy surfaces leads you genuinely want to follow up on?
+- which strategy creates the least noise?
+- which strategy produces real conversations?
+
+The intended comparison loop is:
+
+1. run different approaches for the same business
+2. approve or reject surfaced leads
+3. track replies and conversations by approach
+4. keep the strategies that produce the best actual outcomes
 
 ## Provider Setup
 
@@ -225,7 +325,18 @@ leadops mark-status \
 
 ## Email Digest
 
-LeadOps always writes a plain-text digest. It can also send that digest through SMTP.
+LeadOps always writes both:
+
+- `outbox/YYYY-MM-DD/daily-digest.txt`
+- `outbox/YYYY-MM-DD/daily-digest.html`
+
+When SMTP is configured, it sends a multipart email with the plain-text digest as the fallback and the HTML digest as the primary rendered version.
+
+Each digest also includes a compact `Run context` block so you can see:
+
+- which approach produced the packet
+- what that approach was prioritizing
+- what it was trying to reject
 
 Example:
 
@@ -265,22 +376,42 @@ On macOS, LeadOps can generate and install a `launchd` job for a daily run.
 Preview the plist:
 
 ```bash
-leadops print-launchd --workspace ~/leadops-workspace
+leadops print-launchd \
+  --workspace ~/leadops-workspace \
+  --approach builder_need \
+  --time 08:00 \
+  --time 11:00 \
+  --time 14:00 \
+  --time 17:00
 ```
 
 Install the default job:
 
 ```bash
-leadops install-launchd --workspace ~/leadops-workspace
+leadops install-launchd \
+  --workspace ~/leadops-workspace \
+  --approach builder_need \
+  --time 08:00 \
+  --time 11:00 \
+  --time 14:00 \
+  --time 17:00
 ```
 
-Current defaults:
+Current defaults when you do not pass `--time`:
 
 - label: `dev.leadops.daily`
 - time: `08:00` local time
-- tracks: `connectors` and `founders`
+- approach: `Founder Needs Builder` (`builder_need`)
 - per-query limit: `2`
 - digest send: enabled
+
+You can repeat `--time HH:MM` to schedule multiple local runs per day while keeping each run bounded and high-signal.
+
+You can still add extra `--discover-track` flags on top of the selected approach, but the normal path is:
+
+- choose one approach
+- let that approach define the default track mix
+- compare results by approach over time
 
 ## Development
 

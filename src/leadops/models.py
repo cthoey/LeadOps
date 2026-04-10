@@ -44,13 +44,18 @@ class RubricScores:
         )
         return float(positive - negative)
 
-    def gates_pass(self) -> bool:
-        return (
+    def gates_pass(self, *, kind: str | None = None) -> bool:
+        base_pass = (
             self.work_shape_fit >= 4
             and self.founder_proximity >= 4
             and self.one_builder_fit >= 4
             and self.evidence_strength >= 3
         )
+        if not base_pass:
+            return False
+        if kind == "founder":
+            return self.stage_fit >= 4 and self.urgency_timing >= 3
+        return True
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

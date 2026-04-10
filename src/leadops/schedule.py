@@ -14,8 +14,7 @@ DEFAULT_LABEL = "dev.leadops.daily"
 class LaunchdSpec:
     label: str
     plist_path: Path
-    hour: int
-    minute: int
+    times: tuple[tuple[int, int], ...]
     program_arguments: list[str]
     working_directory: Path
     stdout_path: Path
@@ -30,11 +29,14 @@ def build_program_arguments(
     *,
     repo_root: Path,
     workspace: Path,
+    approach_name: str | None,
     discover_tracks: list[str],
     discover_per_query_limit: int | None,
     send_digest: bool,
 ) -> list[str]:
     args = [str(repo_root / "bin" / "leadops-daily"), str(workspace)]
+    if approach_name:
+        args.extend(["--approach", approach_name])
     for track in discover_tracks:
         args.extend(["--discover-track", track])
     if discover_per_query_limit is not None:
@@ -45,15 +47,26 @@ def build_program_arguments(
 
 
 def render_launchd_plist(spec: LaunchdSpec) -> str:
+    if len(spec.times) == 1:
+        hour, minute = spec.times[0]
+        start_calendar_interval: object = {
+            "Hour": hour,
+            "Minute": minute,
+        }
+    else:
+        start_calendar_interval = [
+            {
+                "Hour": hour,
+                "Minute": minute,
+            }
+            for hour, minute in spec.times
+        ]
     payload = {
         "Label": spec.label,
         "ProgramArguments": spec.program_arguments,
         "WorkingDirectory": str(spec.working_directory),
         "RunAtLoad": False,
-        "StartCalendarInterval": {
-            "Hour": spec.hour,
-            "Minute": spec.minute,
-        },
+        "StartCalendarInterval": start_calendar_interval,
         "StandardOutPath": str(spec.stdout_path),
         "StandardErrorPath": str(spec.stderr_path),
     }

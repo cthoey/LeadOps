@@ -17,6 +17,7 @@ usage:
   leadops-swiftbar run-daily <workspace> [run-daily args...]
   leadops-swiftbar send-digest <workspace> <date>
   leadops-swiftbar mark-status <workspace> <target_id> <status> [extra args...]
+  leadops-swiftbar copy-draft <workspace> <packet_date> <target_id>
 EOF
   exit 2
 }
@@ -55,6 +56,42 @@ case "$action" in
     status="$2"
     shift 2
     exec python3 -m leadops mark-status --workspace "$workspace" "$target_id" "$status" "$@"
+    ;;
+  copy-draft)
+    if [[ $# -lt 2 ]]; then
+      usage
+    fi
+    packet_date="$1"
+    target_id="$2"
+    shift 2
+    exec python3 - "$workspace" "$packet_date" "$target_id" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1]).expanduser()
+packet_date = sys.argv[2]
+target_id = int(sys.argv[3])
+packet_path = workspace / "outbox" / packet_date / "daily-brief.json"
+if not packet_path.exists():
+    raise SystemExit(f"Missing packet: {packet_path}")
+
+payload = json.loads(packet_path.read_text(encoding="utf-8"))
+items = list(payload.get("new_targets", [])) + list(payload.get("followups_due", []))
+for item in items:
+    target = item.get("target", {})
+    if int(target.get("id", 0) or 0) != target_id:
+        continue
+    assessment = item.get("assessment", {})
+    subject = str(assessment.get("draft_subject", "") or "").strip()
+    body = str(assessment.get("draft_body", "") or "").strip()
+    full_draft = f"Subject: {subject}\n\n{body}".strip()
+    subprocess.run(["/usr/bin/pbcopy"], input=full_draft, text=True, check=True)
+    raise SystemExit(0)
+
+raise SystemExit(f"Target {target_id} not found in packet {packet_date}")
+PY
     ;;
   *)
     usage

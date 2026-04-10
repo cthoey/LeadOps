@@ -47,25 +47,77 @@ CONNECTOR_TRACK = QueryTrack(
 
 FOUNDER_TRACK = QueryTrack(
     name="founders",
-    description="Tiny teams and early products that look closer to idea/prototype-to-launch work than maintenance or hiring.",
+    description="Founder-side opportunities that still look close to roadmap-to-build or prototype-to-launch work.",
     queries=(
         QuerySpec(
-            name="beta_waitlist",
+            name="roadmap_build_transition",
             kind="founder",
-            query="startup beta waitlist official site founder product SaaS",
-            description="Very early software products still signaling launch-stage motion.",
+            query="founder roadmap prototype official site customer-facing product startup",
+            description="Founders with a real product direction who may be nearing the point of hiring one builder.",
         ),
         QuerySpec(
-            name="early_access_product",
+            name="prototype_wireframes_transition",
             kind="founder",
-            query="early access product official site founder customer-facing software startup",
-            description="Customer-facing products still in early access or prototype mode.",
+            query="founder prototype wireframes official site product startup build",
+            description="Founders talking about prototypes, flows, or wireframes rather than a settled engineering team.",
         ),
         QuerySpec(
-            name="prototype_launch",
+            name="small_team_build_gap",
             kind="founder",
-            query="prototype official site founder launch startup software tiny team",
-            description="Teams explicitly talking about prototypes and launches.",
+            query="founder no engineering team roadmap prototype official site startup",
+            description="Very small teams that may have product direction but no visible engineering depth.",
+        ),
+    ),
+)
+
+
+BUILDER_NEED_TRACK = QueryTrack(
+    name="builder_need",
+    description="Founder-side opportunities where the public signals suggest a real implementation gap, not just an existing product.",
+    queries=(
+        QuerySpec(
+            name="no_code_to_custom_build",
+            kind="founder",
+            query="founder no-code prototype custom build no engineering team startup",
+            description="Founders who look like they have a prototype or no-code surface but may need a real build partner.",
+        ),
+        QuerySpec(
+            name="design_handoff_gap",
+            kind="founder",
+            query="founder product design prototype handoff no engineering team startup",
+            description="Founder-side work that may be nearing a design-to-build handoff without in-house engineering depth.",
+        ),
+        QuerySpec(
+            name="roadmap_build_help",
+            kind="founder",
+            query="founder roadmap prototype build help project based startup",
+            description="Founders whose public language suggests roadmap or prototype work that still needs a real builder.",
+        ),
+    ),
+)
+
+
+PLACE_WATCH_TRACK = QueryTrack(
+    name="place_watch",
+    description="Specific public surfaces where founders sometimes signal explicit or unusually visible build needs.",
+    queries=(
+        QuerySpec(
+            name="hn_freelancer_thread",
+            kind="founder",
+            query='site:news.ycombinator.com "Freelancer? Seeking freelancer?" "looking for developer" MVP founder',
+            description="Recurring HN freelancer threads that occasionally contain direct builder-shaped asks.",
+        ),
+        QuerySpec(
+            name="weweb_jobs_collabs",
+            kind="founder",
+            query='site:community.weweb.io/c/jobs "founder" MVP developer build',
+            description="WeWeb jobs and collab posts where founders sometimes ask for real implementation help.",
+        ),
+        QuerySpec(
+            name="bubble_jobs_freelance",
+            kind="founder",
+            query='site:forum.bubble.io/c/jobs-freelance founder MVP developer build',
+            description="Bubble jobs and freelance posts where founders sometimes need a proper build partner.",
         ),
     ),
 )
@@ -76,8 +128,8 @@ DAILY_TRACK = QueryTrack(
     description="A compact mixed track for one daily pass.",
     queries=(
         CONNECTOR_TRACK.queries[0],
-        CONNECTOR_TRACK.queries[1],
-        FOUNDER_TRACK.queries[0],
+        BUILDER_NEED_TRACK.queries[0],
+        BUILDER_NEED_TRACK.queries[2],
     ),
 )
 
@@ -85,6 +137,8 @@ DAILY_TRACK = QueryTrack(
 TRACKS: dict[str, QueryTrack] = {
     CONNECTOR_TRACK.name: CONNECTOR_TRACK,
     FOUNDER_TRACK.name: FOUNDER_TRACK,
+    BUILDER_NEED_TRACK.name: BUILDER_NEED_TRACK,
+    PLACE_WATCH_TRACK.name: PLACE_WATCH_TRACK,
     DAILY_TRACK.name: DAILY_TRACK,
 }
 
@@ -97,4 +151,10 @@ def get_track(name: str) -> QueryTrack:
 
 
 def list_tracks() -> list[QueryTrack]:
-    return [TRACKS["connectors"], TRACKS["founders"], TRACKS["daily"]]
+    return [
+        TRACKS["connectors"],
+        TRACKS["founders"],
+        TRACKS["builder_need"],
+        TRACKS["place_watch"],
+        TRACKS["daily"],
+    ]

@@ -48,7 +48,7 @@ Your job is to search the public web for highly aligned outreach targets and ret
 
 The consulting business is extremely specific:
 - founder-side and startup-side
-- helping founders or very small teams turn ideas, roadmaps, and rough prototypes into launch-ready customer-facing web apps
+- helping founders or very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps
 - direct founder collaboration
 - one accountable builder
 
@@ -70,6 +70,8 @@ Only return candidates with enough public evidence to justify follow-up.
 Do not invent facts.
 Do not hallucinate source URLs.
 If evidence is weak or the work shape is unclear, exclude the candidate.
+Only return founder targets when public evidence suggests paying one external builder is a real next step.
+Do not reward an existing product unless the evidence shows a real implementation gap, design-to-build handoff, roadmap pressure, or no obvious engineering team.
 
 Return JSON only.
 """
@@ -79,6 +81,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     profile = payload["profile"]
     feedback = payload.get("feedback", {})
     search = payload["search"]
+    approach = payload.get("approach", {})
     lines = [
         "Run a web search and return only highly aligned outreach targets.",
         "",
@@ -89,6 +92,19 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     ]
     for item in profile.get("hard_rejects", []):
         lines.append(f"  - {item}")
+    if approach:
+        lines.extend(
+            [
+                "",
+                "Current lead-finding approach:",
+                f"- Name: {approach.get('label', '') or approach.get('name', '')}",
+                f"- Description: {approach.get('description', '')}",
+                f"- Strategy: {approach.get('strategy', '')}",
+                f"- Preferred discovery tracks: {', '.join(approach.get('discover_tracks', [])) or '(none)'}",
+                f"- Prioritize: {', '.join(str(item) for item in approach.get('prioritize', [])) or '(none)'}",
+                f"- Reject: {', '.join(str(item) for item in approach.get('reject', [])) or '(none)'}",
+            ]
+        )
     liked = feedback.get("liked", [])
     avoided = feedback.get("avoided", [])
     if liked or avoided:
@@ -125,8 +141,10 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "- Return at most the requested number of candidates.",
             "- Prefer official company/founder pages when possible.",
             "- Only include candidates you would genuinely want in a tiny daily review packet.",
+            "- For founder targets, require signs that one accountable external builder is a plausible next step now.",
             "- Keep evidence concise and source-backed.",
             "- If you find fewer than the requested number of strong fits, return fewer.",
+            "- Follow the current lead-finding approach strictly. It changes what counts as a strong result.",
         ]
     )
     return "\n".join(lines)

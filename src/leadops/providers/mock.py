@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from leadops.approaches import ApproachSpec
 from leadops.config import WorkspaceConfig
 from leadops.models import AssessmentResult, RubricScores
 from leadops.repository import TargetRecord
@@ -12,16 +13,37 @@ class MockProvider:
         self,
         target: TargetRecord,
         config: WorkspaceConfig,
+        approach: ApproachSpec | None = None,
         feedback_context: dict[str, list[dict[str, str]]] | None = None,
     ) -> AssessmentResult:
         text = " ".join(
             part for part in [target.name, target.notes, target.raw_evidence, target.url, target.source] if part
         ).lower()
 
-        early_keywords = ("idea", "prototype", "beta", "waitlist", "mvp", "roadmap", "launch", "founder")
+        early_keywords = ("idea", "prototype", "mvp", "roadmap", "wireframe", "launch", "founder")
         negative_keywords = ("hire", "recruiter", "contract-to-hire", "staff aug", "fractional cto", "maintenance")
-        design_keywords = ("design", "ux", "product studio", "prototype")
+        design_keywords = ("design", "ux", "product studio", "prototype", "wireframe", "handoff")
         team_keywords = ("small team", "tiny team", "founder-led", "cofounder", "two-person")
+        builder_need_keywords = (
+            "no-code",
+            "nocode",
+            "prototype",
+            "roadmap",
+            "wireframe",
+            "v1",
+            "v1.1",
+            "handoff",
+            "build help",
+            "engineering help",
+            "build partner",
+            "project-based",
+            "milestone-based",
+            "work directly with",
+            "no engineering team",
+            "custom build",
+            "launch-ready",
+        )
+        live_product_keywords = ("launched", "live product", "customers", "production", "active users", "in market")
 
         work_shape_fit = 5 if any(word in text for word in early_keywords) else 2
         if target.kind == "connector" and any(word in text for word in ("design", "studio", "startup", "product")):
@@ -31,10 +53,10 @@ class MockProvider:
         if target.kind == "connector" and any(word in text for word in ("startup", "studio", "design")):
             founder_proximity = max(founder_proximity, 4)
         one_builder_fit = 5 if any(word in text for word in team_keywords) or target.kind == "connector" else 3
-        stage_fit = 5 if any(word in text for word in ("idea", "prototype", "beta", "waitlist", "mvp")) else 3
+        stage_fit = 5 if any(word in text for word in ("idea", "prototype", "mvp", "roadmap", "wireframe")) else 3
         autonomy_fit = 4 if target.kind == "connector" or any(word in text for word in design_keywords) else 3
         product_excitement = 4 if any(word in text for word in ("startup", "launch", "prototype", "product")) else 2
-        urgency_timing = 4 if any(word in text for word in ("launch", "new", "beta", "waitlist")) else 2
+        urgency_timing = 4 if any(word in text for word in ("launch", "new", "prototype", "roadmap", "build help")) else 2
         evidence_strength = 4 if len(target.notes.strip()) >= 30 or target.url else 2
 
         staff_aug_risk = 1 if any(word in text for word in ("team extension", "staff aug")) else 0
@@ -44,6 +66,38 @@ class MockProvider:
         buyer_access_unclear = 1 if target.kind == "founder" and "founder" not in text else 0
         weak_evidence = 1 if evidence_strength < 3 else 0
         low_enjoyment = 1 if any(word in text for word in negative_keywords) else 0
+
+        has_gap_signal = any(word in text for word in builder_need_keywords)
+        has_live_signal = any(word in text for word in live_product_keywords)
+        if target.kind == "founder":
+            if has_gap_signal:
+                work_shape_fit = min(5, work_shape_fit + 1)
+                one_builder_fit = min(5, one_builder_fit + 2)
+                urgency_timing = min(5, urgency_timing + 1)
+                stage_fit = min(5, stage_fit + 1)
+            if has_live_signal and not has_gap_signal:
+                work_shape_fit = max(0, work_shape_fit - 2)
+                one_builder_fit = max(0, one_builder_fit - 3)
+                stage_fit = max(0, stage_fit - 1)
+                urgency_timing = max(0, urgency_timing - 1)
+                buyer_access_unclear = min(5, buyer_access_unclear + 1)
+                low_enjoyment = min(5, low_enjoyment + 1)
+
+        approach_name = approach.name if approach else ""
+        if approach_name == "builder_need":
+            if target.kind == "founder":
+                if not has_gap_signal:
+                    work_shape_fit = max(0, work_shape_fit - 1)
+                    one_builder_fit = max(0, one_builder_fit - 1)
+            else:
+                product_excitement = max(2, product_excitement - 1)
+        elif approach_name == "place_watch":
+            if any(word in text for word in ("cofounder", "equity", "technical cofounder")):
+                advisory_smell = min(5, advisory_smell + 2)
+                low_enjoyment = min(5, low_enjoyment + 2)
+            if any(word in text for word in ("freelancer", "seeking freelancer", "looking for developer", "project-based", "milestone-based")):
+                urgency_timing = min(5, urgency_timing + 1)
+                evidence_strength = min(5, evidence_strength + 1)
 
         if feedback_context:
             for example in feedback_context.get("avoided", []):
@@ -75,9 +129,9 @@ class MockProvider:
             low_enjoyment=low_enjoyment,
         )
 
-        recommend = rubric.gates_pass() and rubric.fit_score() >= 45
+        recommend = rubric.gates_pass(kind=target.kind) and rubric.fit_score() >= 45
         why_fit = (
-            "Signals point to early product work with plausible founder proximity and room for one accountable builder."
+            "Signals point to roadmap, prototype, or transition-stage product work with room for one accountable builder."
             if recommend
             else "The available signals are too weak or too misaligned to justify surfacing this today."
         )
@@ -104,6 +158,8 @@ class MockProvider:
         risks = []
         if buyer_access_unclear:
             risks.append("Direct founder access is not clearly visible from the available evidence.")
+        if target.kind == "founder" and has_live_signal and not has_gap_signal:
+            risks.append("This looks like an existing product, but the evidence does not show a clear build-gap or ownership need.")
         if evidence_strength < 4:
             risks.append("Evidence is still fairly thin and may need corroboration.")
 

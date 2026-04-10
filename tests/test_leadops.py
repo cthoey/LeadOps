@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 import tempfile
 import unittest
@@ -8,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from leadops.approaches import get_approach
+from leadops.cli import main as cli_main
 from leadops.config import EmailConfig, initialize_workspace, load_workspace_config
 from leadops.daily import run_daily
 from leadops.db import connect, initialize_database
@@ -63,16 +66,21 @@ class LeadOpsTests(unittest.TestCase):
                 name="Example Startup",
                 url="https://example.com",
                 source="manual",
-                notes="Founder-led startup with beta product and early launch needs.",
+                notes="Founder-led startup with roadmap, prototype, no engineering team, and early launch needs.",
             )
 
             result = run_daily(repo, config, "2026-04-08")
             self.assertTrue(result.packet_markdown.exists())
             self.assertTrue(result.packet_json.exists())
             self.assertTrue(result.digest_text.exists())
+            self.assertTrue(result.digest_html.exists())
             self.assertGreaterEqual(result.surfaced_new, 1)
             digest_body = result.digest_text.read_text(encoding="utf-8")
+            digest_html = result.digest_html.read_text(encoding="utf-8")
             self.assertIn("LeadOps Daily Brief - 2026-04-08", digest_body)
+            self.assertIn("<!doctype html>", digest_html)
+            self.assertIn("summary-card", digest_html)
+            self.assertIn("Example Startup", digest_html)
 
     def test_send_email_digest_uses_smtp(self) -> None:
         email_config = EmailConfig(
@@ -96,12 +104,18 @@ class LeadOpsTests(unittest.TestCase):
             send_email_digest(
                 email_config=email_config,
                 subject="LeadOps Daily Brief - 2026-04-08 (1 new, 0 follow-ups)",
-                body="Test digest body",
+                body_text="Test digest body",
+                body_html="<html><body><p>Test digest body</p></body></html>",
             )
 
         smtp_cls.assert_called_once_with("smtp.example.com", 587, timeout=60)
         smtp_instance.starttls.assert_called_once()
         smtp_instance.send_message.assert_called_once()
+        sent_message = smtp_instance.send_message.call_args.args[0]
+        self.assertTrue(sent_message.is_multipart())
+        payload = sent_message.get_payload()
+        self.assertEqual(payload[0].get_content_type(), "text/plain")
+        self.assertEqual(payload[1].get_content_type(), "text/html")
 
     def test_render_launchd_plist_contains_daily_wrapper(self) -> None:
         repo_root = Path("/tmp/leadops")
@@ -109,6 +123,7 @@ class LeadOpsTests(unittest.TestCase):
         program_arguments = build_program_arguments(
             repo_root=repo_root,
             workspace=workspace,
+            approach_name="early_product",
             discover_tracks=["daily"],
             discover_per_query_limit=1,
             send_digest=True,
@@ -116,8 +131,7 @@ class LeadOpsTests(unittest.TestCase):
         spec = LaunchdSpec(
             label="com.example.leadops.daily",
             plist_path=Path("/tmp/com.example.leadops.daily.plist"),
-            hour=8,
-            minute=0,
+            times=((8, 0),),
             program_arguments=program_arguments,
             working_directory=repo_root,
             stdout_path=workspace / "var" / "log" / "launchd.stdout.log",
@@ -128,8 +142,137 @@ class LeadOpsTests(unittest.TestCase):
 
         self.assertIn("com.example.leadops.daily", plist_text)
         self.assertIn("/tmp/leadops/bin/leadops-daily", plist_text)
+        self.assertIn("--approach", plist_text)
+        self.assertIn("early_product", plist_text)
         self.assertIn("--discover-track", plist_text)
         self.assertIn("--send-digest", plist_text)
+
+    def test_render_launchd_plist_supports_multiple_daily_times(self) -> None:
+        repo_root = Path("/tmp/leadops")
+        workspace = Path("/tmp/leadops-workspace")
+        spec = LaunchdSpec(
+            label="com.example.leadops.daily",
+            plist_path=Path("/tmp/com.example.leadops.daily.plist"),
+            times=((8, 0), (11, 0), (14, 0), (17, 0)),
+            program_arguments=build_program_arguments(
+                repo_root=repo_root,
+                workspace=workspace,
+                approach_name="builder_need",
+                discover_tracks=[],
+                discover_per_query_limit=2,
+                send_digest=True,
+            ),
+            working_directory=repo_root,
+            stdout_path=workspace / "var" / "log" / "launchd.stdout.log",
+            stderr_path=workspace / "var" / "log" / "launchd.stderr.log",
+        )
+
+        plist_text = render_launchd_plist(spec)
+
+        self.assertGreaterEqual(plist_text.count("<key>Hour</key>"), 4)
+        self.assertIn("<integer>17</integer>", plist_text)
+
+    def test_builder_need_approach_caps_connectors_in_packet(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            fake_provider = Path(__file__).with_name("fake_provider.py").resolve()
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                f"""
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "command"
+command = "python3 {fake_provider}"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="connector",
+                name="Design Studio A",
+                url="https://design-a.example",
+                source="manual",
+                notes="Founder-facing product design studio for startup MVP work.",
+            )
+            repo.add_or_update_target(
+                kind="connector",
+                name="Design Studio B",
+                url="https://design-b.example",
+                source="manual",
+                notes="Founder-facing design partner for early product teams.",
+            )
+            repo.add_or_update_target(
+                kind="founder",
+                name="Builder Need Startup",
+                url="https://builder-need.example",
+                source="manual",
+                notes="Founder-led no-code prototype with waitlist, roadmap pressure, and no visible engineering team.",
+            )
+
+            result = run_daily(repo, config, "2026-04-09", approach=get_approach("builder_need"))
+
+            self.assertEqual(result.surfaced_new, 2)
+            payload = json.loads((workspace / "outbox" / "2026-04-09" / "daily-brief.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
+            surfaced = payload["new_targets"]
+            self.assertEqual(len(surfaced), 2)
+            surfaced_kinds = [item["target"]["kind"] for item in surfaced]
+            self.assertEqual(surfaced_kinds.count("founder"), 1)
+            self.assertEqual(surfaced_kinds.count("connector"), 1)
+            digest_text = (workspace / "outbox" / "2026-04-09" / "daily-digest.txt").read_text(encoding="utf-8")
+            digest_html = (workspace / "outbox" / "2026-04-09" / "daily-digest.html").read_text(encoding="utf-8")
+            self.assertIn("Run context", digest_text)
+            self.assertIn("Founder Needs Builder (builder_need)", digest_text)
+            self.assertIn("Prioritize:", digest_text)
+            self.assertIn("Reject:", digest_text)
+            self.assertIn("Run Context", digest_html)
+            self.assertIn("Founder Needs Builder", digest_html)
+
+    def test_builder_need_rejects_live_product_without_gap_signal(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="founder",
+                name="Launched Product Co",
+                url="https://launched.example",
+                source="manual",
+                notes="Founder-led startup with launched product, active users, and customers. Hiring engineers.",
+            )
+
+            result = run_daily(repo, config, "2026-04-09", approach=get_approach("builder_need"))
+
+            self.assertEqual(result.surfaced_new, 0)
+
+    def test_cli_run_daily_defaults_to_builder_need_without_forcing_discovery(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="founder",
+                name="Prototype Founder",
+                url="https://prototype.example",
+                source="manual",
+                notes="Founder-led roadmap and prototype with no engineering team and launch pressure.",
+            )
+
+            exit_code = cli_main(["run-daily", "--workspace", str(workspace), "--date", "2026-04-09"])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads((workspace / "outbox" / "2026-04-09" / "daily-brief.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["run_context"]["approach"]["name"], "builder_need")
+            self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
 
     def test_feedback_context_payload_groups_recent_liked_and_avoided(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
@@ -311,7 +454,7 @@ timeout_seconds = 30
                 name="Snoozed Candidate",
                 url="https://example.com/waitlist",
                 source="manual",
-                notes="Founder-led beta product with clear early-stage build work.",
+                notes="Founder-led prototype with roadmap pressure, no engineering team, and clear early-stage build work.",
             )
             repo.update_status(
                 target_id,

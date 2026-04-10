@@ -11,7 +11,8 @@ def send_email_digest(
     *,
     email_config: EmailConfig,
     subject: str,
-    body: str,
+    body_text: str,
+    body_html: str | None = None,
 ) -> None:
     if email_config.mode != "smtp":
         raise RuntimeError("Email digest is not configured. Set [email] mode = \"smtp\" first.")
@@ -24,7 +25,9 @@ def send_email_digest(
     message["Subject"] = subject
     message["From"] = email_config.from_addr
     message["To"] = email_config.to_addr
-    message.set_content(body)
+    message.set_content(body_text)
+    if body_html:
+        message.add_alternative(body_html, subtype="html")
 
     with smtplib.SMTP(email_config.host, email_config.port, timeout=60) as smtp:
         if email_config.starttls:

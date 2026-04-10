@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import subprocess
 
+from leadops.approaches import ApproachSpec
 from leadops.config import WorkspaceConfig
 from leadops.models import DiscoveryBatch, discovery_batch_from_dict
 from leadops.query_plans import QueryTrack
@@ -55,6 +56,7 @@ def discover_web(
     kind: str,
     limit: int,
     source: str,
+    approach: ApproachSpec | None = None,
 ) -> DiscoveryRunResult:
     if config.discovery.provider != "command":
         raise RuntimeError("Discovery is not configured. Set [discovery] provider = \"command\" first.")
@@ -68,6 +70,7 @@ def discover_web(
             "offer": config.profile.offer,
             "hard_rejects": config.profile.hard_rejects,
         },
+        "approach": approach.as_payload() if approach else {},
         "feedback": repo.feedback_context_payload(),
         "search": {
             "kind": kind,
@@ -124,6 +127,7 @@ def discover_track(
     track: QueryTrack,
     limit_override: int | None = None,
     source_prefix: str = "web-discovery",
+    approach: ApproachSpec | None = None,
 ) -> DiscoveryTrackResult:
     results: list[DiscoveryTrackQueryResult] = []
     for spec in track.queries:
@@ -134,6 +138,7 @@ def discover_track(
             kind=spec.kind,
             limit=limit_override if limit_override is not None else spec.default_limit,
             source=f"{source_prefix}:{track.name}:{spec.name}",
+            approach=approach,
         )
         results.append(
             DiscoveryTrackQueryResult(

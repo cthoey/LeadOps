@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from leadops.approaches import ApproachSpec
 from leadops.config import WorkspaceConfig
 from leadops.models import AssessmentResult, assessment_from_dict
 from leadops.repository import TargetRecord
@@ -15,6 +16,7 @@ class CommandProvider:
         self,
         target: TargetRecord,
         config: WorkspaceConfig,
+        approach: ApproachSpec | None = None,
         feedback_context: dict[str, list[dict[str, str]]] | None = None,
     ) -> AssessmentResult:
         if not config.llm.command:
@@ -27,6 +29,7 @@ class CommandProvider:
                 "hard_rejects": config.profile.hard_rejects,
                 "daily_new_lead_cap": config.profile.daily_new_lead_cap,
             },
+            "approach": approach.as_payload() if approach else {},
             "feedback": feedback_context or {"liked": [], "avoided": []},
             "target": {
                 "id": target.id,
