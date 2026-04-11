@@ -213,7 +213,7 @@ class LeadOpsTests(unittest.TestCase):
         program_arguments = build_program_arguments(
             repo_root=repo_root,
             workspace=workspace,
-            approach_name="early_product",
+            approach_name="balanced",
             discover_tracks=["daily"],
             discover_per_query_limit=1,
             send_digest=True,
@@ -233,7 +233,7 @@ class LeadOpsTests(unittest.TestCase):
         self.assertIn("com.example.leadops.daily", plist_text)
         self.assertIn("/tmp/leadops/bin/leadops-daily", plist_text)
         self.assertIn("--approach", plist_text)
-        self.assertIn("early_product", plist_text)
+        self.assertIn("balanced", plist_text)
         self.assertIn("--discover-track", plist_text)
         self.assertIn("--send-digest", plist_text)
 
@@ -310,11 +310,11 @@ timeout_seconds = 30
                 notes="Founder-led no-code prototype with waitlist, roadmap pressure, and no visible engineering team.",
             )
 
-            result = run_daily(repo, config, "2026-04-09", approach=get_approach("builder_need"))
+            result = run_daily(repo, config, "2026-04-09", approach=get_approach("transition_focus"))
 
             self.assertEqual(result.surfaced_new, 3)
             payload = json.loads((workspace / "outbox" / "2026-04-09" / "daily-brief.json").read_text(encoding="utf-8"))
-            self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
+            self.assertEqual(payload["run_context"]["approach"]["label"], "Transition Focus")
             surfaced = self._candidate_queue_items(payload)
             self.assertEqual(len(surfaced), 3)
             surfaced_kinds = [item["target"]["kind"] for item in surfaced]
@@ -323,13 +323,13 @@ timeout_seconds = 30
             digest_text = (workspace / "outbox" / "2026-04-09" / "daily-digest.txt").read_text(encoding="utf-8")
             digest_html = (workspace / "outbox" / "2026-04-09" / "daily-digest.html").read_text(encoding="utf-8")
             self.assertIn("Run context", digest_text)
-            self.assertIn("Founder Needs Builder (builder_need)", digest_text)
+            self.assertIn("Transition Focus (transition_focus)", digest_text)
             self.assertIn("Prioritize:", digest_text)
             self.assertIn("Reject:", digest_text)
             self.assertIn("Run Context", digest_html)
-            self.assertIn("Founder Needs Builder", digest_html)
+            self.assertIn("Transition Focus", digest_html)
 
-    def test_builder_need_rejects_live_product_without_gap_signal(self) -> None:
+    def test_transition_focus_rejects_live_product_without_gap_signal(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
             config = load_workspace_config(workspace)
@@ -342,7 +342,7 @@ timeout_seconds = 30
                 notes="Founder-led startup with launched product, active users, and customers. Hiring engineers.",
             )
 
-            result = run_daily(repo, config, "2026-04-09", approach=get_approach("builder_need"))
+            result = run_daily(repo, config, "2026-04-09", approach=get_approach("transition_focus"))
 
             self.assertEqual(result.surfaced_new, 0)
 

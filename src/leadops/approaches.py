@@ -27,20 +27,20 @@ class ApproachSpec:
         }
 
 
-EARLY_PRODUCT = ApproachSpec(
-    name="early_product",
-    label="Founder + Connector Mix",
-    description="Balanced founder-side lane: roadmap-to-build, prototype-to-launch work, and strong founder-adjacent connectors.",
+BALANCED = ApproachSpec(
+    name="balanced",
+    label="Balanced Mix",
+    description="Balanced retrieval mix: direct buyers, implementation transitions, and strong referral partners.",
     strategy=(
-        "Use a mixed search strategy. Surface founder-side opportunities that still look close to roadmap-to-build "
-        "or prototype-to-launch work, plus founder-adjacent connectors. Existing products are acceptable only when "
+        "Use a mixed search strategy. Surface direct opportunities that still look close to roadmap-to-build "
+        "or prototype-to-launch work, plus adjacent referral partners. Existing products are acceptable only when "
         "the public evidence shows a real implementation transition rather than generic traction, maintenance, or hiring."
     ),
-    discover_tracks=("connectors", "founders"),
+    discover_tracks=("referral_partners", "direct_buyers"),
     prioritize=(
         "roadmap-to-build transitions",
         "rough prototypes that need real implementation",
-        "connector studios with founder trust",
+        "referral partners with downstream implementation gaps",
         "early products at a real implementation transition",
     ),
     reject=(
@@ -54,17 +54,17 @@ EARLY_PRODUCT = ApproachSpec(
 )
 
 
-BUILDER_NEED = ApproachSpec(
-    name="builder_need",
-    label="Founder Needs Builder",
+TRANSITION_FOCUS = ApproachSpec(
+    name="transition_focus",
+    label="Transition Focus",
     description="Narrowest direct-fit lane: look for visible evidence that one accountable builder is needed now.",
     strategy=(
-        "Be harsh. Prefer founders or tiny teams with a real product idea, roadmap, or prototype where public "
+        "Be harsh. Prefer small teams with a real product idea, roadmap, or prototype where public "
         "evidence suggests paying one external builder is the next sensible step. Do not reward already-live "
         "products unless the public evidence also shows a real implementation gap, design-to-build handoff, or "
         "launch ownership need."
     ),
-    discover_tracks=("builder_need", "connectors"),
+    discover_tracks=("transition_signals", "referral_partners"),
     prioritize=(
         "real product idea, roadmap, or prototype",
         "visible build gap or handoff",
@@ -82,19 +82,19 @@ BUILDER_NEED = ApproachSpec(
 )
 
 
-PLACE_WATCH = ApproachSpec(
-    name="place_watch",
-    label="Public Founder Asks",
+PUBLIC_SIGNAL_WATCH = ApproachSpec(
+    name="public_signal_watch",
+    label="Public Signal Watch",
     description="Monitor specific public surfaces for explicit or unusually visible builder-shaped opportunities.",
     strategy=(
-        "Search a few public places where founders sometimes openly ask for help turning a roadmap, prototype, or "
+        "Search a few public places where people sometimes openly ask for help turning a roadmap, prototype, or "
         "rough product into something real. Favor freshness and direct asks. Reject cofounder requests, hiring posts, "
         "equity-only offers, or anything that looks like a role fill instead of scoped consulting."
     ),
-    discover_tracks=("place_watch",),
+    discover_tracks=("public_signals",),
     prioritize=(
         "fresh public asks",
-        "direct founder language",
+        "direct buyer language",
         "scoped build help",
         "project-based or milestone-shaped work",
         "implementation ownership",
@@ -110,9 +110,9 @@ PLACE_WATCH = ApproachSpec(
 
 
 APPROACHES: dict[str, ApproachSpec] = {
-    EARLY_PRODUCT.name: EARLY_PRODUCT,
-    BUILDER_NEED.name: BUILDER_NEED,
-    PLACE_WATCH.name: PLACE_WATCH,
+    BALANCED.name: BALANCED,
+    TRANSITION_FOCUS.name: TRANSITION_FOCUS,
+    PUBLIC_SIGNAL_WATCH.name: PUBLIC_SIGNAL_WATCH,
 }
 
 
@@ -124,4 +124,4 @@ def get_approach(name: str) -> ApproachSpec:
 
 
 def list_approaches() -> list[ApproachSpec]:
-    return [APPROACHES["early_product"], APPROACHES["builder_need"], APPROACHES["place_watch"]]
+    return [APPROACHES["balanced"], APPROACHES["transition_focus"], APPROACHES["public_signal_watch"]]

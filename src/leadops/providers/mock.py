@@ -35,7 +35,7 @@ class MockProvider:
         )
         design_keywords = ("design", "ux", "product studio", "prototype", "wireframe", "handoff")
         team_keywords = ("small team", "tiny team", "founder-led", "cofounder", "two-person")
-        builder_need_keywords = (
+        transition_keywords = (
             "no-code",
             "nocode",
             "prototype",
@@ -78,7 +78,7 @@ class MockProvider:
         thin_evidence_risk = 1 if evidence_strength < 3 else 0
         negative_fit_signal = 1 if any(word in text for word in negative_keywords) else 0
 
-        has_gap_signal = any(word in text for word in builder_need_keywords)
+        has_gap_signal = any(word in text for word in transition_keywords)
         has_live_signal = any(word in text for word in live_product_keywords)
         has_explicit_ask = any(word in text for word in explicit_ask_keywords)
         if target.kind == "founder":
@@ -96,14 +96,14 @@ class MockProvider:
                 negative_fit_signal = min(5, negative_fit_signal + 1)
 
         approach_name = approach.name if approach else ""
-        if approach_name == "builder_need":
+        if approach_name == "transition_focus":
             if target.kind == "founder":
                 if not has_gap_signal:
                     work_shape_fit = max(0, work_shape_fit - 1)
                     builder_gap_signal = max(0, builder_gap_signal - 1)
             else:
                 positive_interest_signal = max(2, positive_interest_signal - 1)
-        elif approach_name == "place_watch":
+        elif approach_name == "public_signal_watch":
             if any(word in text for word in ("cofounder", "equity", "technical cofounder")):
                 advisory_risk = min(5, advisory_risk + 2)
                 negative_fit_signal = min(5, negative_fit_signal + 2)

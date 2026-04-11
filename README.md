@@ -129,10 +129,10 @@ Use that as a starting point if your business is close to “scope, build, launc
 leadops init-workspace ~/leadops-workspace
 leadops list-approaches
 leadops list-tracks
-leadops discover-approach --workspace ~/leadops-workspace --approach builder_need
+leadops discover-approach --workspace ~/leadops-workspace --approach transition_focus
 leadops discover-track --workspace ~/leadops-workspace --track daily --per-query-limit 2
 leadops run-daily --workspace ~/leadops-workspace
-leadops run-daily --workspace ~/leadops-workspace --approach early_product
+leadops run-daily --workspace ~/leadops-workspace --approach balanced
 leadops list-targets --workspace ~/leadops-workspace
 leadops mark-status --workspace ~/leadops-workspace 12 approved --reason "Exactly the kind of work I want"
 leadops feedback-summary --workspace ~/leadops-workspace
@@ -180,7 +180,7 @@ leadops list-tracks
 
 leadops discover-track \
   --workspace ~/leadops-workspace \
-  --track connectors \
+  --track referral_partners \
   --per-query-limit 2
 ```
 
@@ -189,23 +189,23 @@ Or use a built-in approach:
 ```bash
 leadops list-approaches
 
-# Founder Needs Builder
+# Transition Focus
 leadops discover-approach \
   --workspace ~/leadops-workspace \
-  --approach builder_need
+  --approach transition_focus
 
-# Public Founder Asks
+# Public Signal Watch
 leadops run-daily \
   --workspace ~/leadops-workspace \
-  --approach place_watch
+  --approach public_signal_watch
 ```
 
 Available tracks currently include:
 
-- `connectors`
-- `founders`
-- `builder_need`
-- `place_watch`
+- `referral_partners`
+- `direct_buyers`
+- `transition_signals`
+- `public_signals`
 - `daily`
 
 These tracks are intentionally narrow. The tool is trying to find usable targets, not to build a giant list.
@@ -223,23 +223,23 @@ In other words:
 
 This keeps the feature small. It is not a multi-ICP engine. It is a way to test different lead-finding strategies for the same business.
 
-### `Founder + Connector Mix` (`early_product`)
+### `Balanced Mix` (`balanced`)
 
 Best for the broadest aligned search.
 
 Strategy:
 
-- search both founder-adjacent connectors and founder-side roadmap/prototype transitions
+- search both referral partners and direct roadmap/prototype transitions
 - accept existing products only when they still show a real implementation transition
 - favor roadmap-to-build and prototype-to-launch work over maintenance or hiring
 
 Use it when:
 
 - you want the current balanced motion
-- you still want connectors in the mix
+- you still want referral partners in the mix
 - you want a wider pool without abandoning precision
 
-### `Founder Needs Builder` (`builder_need`)
+### `Transition Focus` (`transition_focus`)
 
 Best for the narrowest direct-fit search.
 
@@ -251,17 +251,17 @@ Strategy:
 
 Use it when:
 
-- you want fewer, harsher direct-founder candidates
+- you want fewer, harsher direct-buyer candidates
 - you care more about visible builder need than general early-product similarity
 - you want the packet to feel closer to “they may actually need me now”
 
-### `Public Founder Asks` (`place_watch`)
+### `Public Signal Watch` (`public_signal_watch`)
 
 Best for monitoring explicit asks on specific public surfaces.
 
 Strategy:
 
-- watch a few places where founders sometimes publicly ask for help turning a roadmap, prototype, or rough product into something real
+- watch a few places where people publicly ask for help turning a roadmap, prototype, or rough product into something real
 - favor freshness and direct asks
 - reject cofounder, hiring, equity-only, or role-fill opportunities aggressively
 
@@ -421,7 +421,7 @@ Or include an explicit retrieval preset:
 ```bash
 leadops print-launchd \
   --workspace ~/leadops-workspace \
-  --approach builder_need \
+  --approach transition_focus \
   --time 08:00 \
   --time 11:00 \
   --time 14:00 \
