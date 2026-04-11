@@ -4,6 +4,37 @@ from pathlib import Path
 import sqlite3
 
 
+ASSESSMENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS assessments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_id INTEGER NOT NULL,
+    run_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    profile_fit TEXT NOT NULL DEFAULT 'unknown',
+    activation_signal TEXT NOT NULL DEFAULT 'unknown',
+    evidence_confidence TEXT NOT NULL DEFAULT 'thin',
+    freshness TEXT NOT NULL DEFAULT 'unknown',
+    action_queue TEXT NOT NULL DEFAULT 'watch',
+    summary_thesis TEXT NOT NULL DEFAULT '',
+    fit_rationale TEXT NOT NULL DEFAULT '',
+    activation_rationale TEXT NOT NULL DEFAULT '',
+    outreach_angle TEXT NOT NULL,
+    draft_subject TEXT NOT NULL,
+    draft_body TEXT NOT NULL,
+    signal_tags_json TEXT NOT NULL DEFAULT '[]',
+    risk_tags_json TEXT NOT NULL DEFAULT '[]',
+    unknowns_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL,
+    source_date TEXT,
+    raw_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(target_id) REFERENCES targets(id),
+    FOREIGN KEY(run_id) REFERENCES daily_runs(id)
+);
+"""
+
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 
@@ -34,27 +65,7 @@ CREATE TABLE IF NOT EXISTS daily_runs (
     notes TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS assessments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    target_id INTEGER NOT NULL,
-    run_id INTEGER NOT NULL,
-    provider TEXT NOT NULL,
-    fit_score REAL NOT NULL,
-    confidence REAL NOT NULL,
-    recommend INTEGER NOT NULL,
-    why_fit TEXT NOT NULL,
-    why_now TEXT NOT NULL,
-    outreach_angle TEXT NOT NULL,
-    draft_subject TEXT NOT NULL,
-    draft_body TEXT NOT NULL,
-    risks_json TEXT NOT NULL,
-    evidence_json TEXT NOT NULL,
-    rubric_json TEXT NOT NULL,
-    raw_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(target_id) REFERENCES targets(id),
-    FOREIGN KEY(run_id) REFERENCES daily_runs(id)
-);
+""" + ASSESSMENTS_TABLE_SQL + """
 
 CREATE TABLE IF NOT EXISTS review_packets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +149,127 @@ def initialize_database(database_path: Path) -> None:
     conn = connect(database_path)
     try:
         conn.executescript(SCHEMA)
+        _migrate_assessments_table(conn)
+        _ensure_assessment_columns(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_assessment_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        "profile_fit": "TEXT NOT NULL DEFAULT 'unknown'",
+        "activation_signal": "TEXT NOT NULL DEFAULT 'unknown'",
+        "evidence_confidence": "TEXT NOT NULL DEFAULT 'thin'",
+        "freshness": "TEXT NOT NULL DEFAULT 'unknown'",
+        "action_queue": "TEXT NOT NULL DEFAULT 'watch'",
+        "summary_thesis": "TEXT NOT NULL DEFAULT ''",
+        "fit_rationale": "TEXT NOT NULL DEFAULT ''",
+        "activation_rationale": "TEXT NOT NULL DEFAULT ''",
+        "signal_tags_json": "TEXT NOT NULL DEFAULT '[]'",
+        "risk_tags_json": "TEXT NOT NULL DEFAULT '[]'",
+        "unknowns_json": "TEXT NOT NULL DEFAULT '[]'",
+        "source_date": "TEXT",
+    }
+    existing = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(assessments)").fetchall()
+    }
+    for name, definition in columns.items():
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE assessments ADD COLUMN {name} {definition}")
+
+
+def _migrate_assessments_table(conn: sqlite3.Connection) -> None:
+    existing = [str(row["name"]) for row in conn.execute("PRAGMA table_info(assessments)").fetchall()]
+    if not existing:
+        return
+
+    desired = {
+        "id",
+        "target_id",
+        "run_id",
+        "provider",
+        "confidence",
+        "profile_fit",
+        "activation_signal",
+        "evidence_confidence",
+        "freshness",
+        "action_queue",
+        "summary_thesis",
+        "fit_rationale",
+        "activation_rationale",
+        "outreach_angle",
+        "draft_subject",
+        "draft_body",
+        "signal_tags_json",
+        "risk_tags_json",
+        "unknowns_json",
+        "evidence_json",
+        "source_date",
+        "raw_json",
+        "created_at",
+    }
+    legacy_markers = {
+        "fit_score",
+        "recommend",
+        "why_fit",
+        "why_now",
+        "risks_json",
+        "rubric_json",
+    }
+    if set(existing) == desired and not any(name in legacy_markers for name in existing):
+        return
+
+    conn.execute("ALTER TABLE assessments RENAME TO assessments_legacy")
+    conn.executescript(ASSESSMENTS_TABLE_SQL)
+
+    rows = conn.execute("SELECT * FROM assessments_legacy ORDER BY id ASC").fetchall()
+    for row in rows:
+        payload = dict(row)
+        summary_thesis = str(payload.get("summary_thesis") or payload.get("fit_rationale") or payload.get("why_fit") or "")
+        fit_rationale = str(payload.get("fit_rationale") or payload.get("why_fit") or "")
+        activation_rationale = str(payload.get("activation_rationale") or payload.get("why_now") or "")
+        risk_tags_json = payload.get("risk_tags_json")
+        if risk_tags_json is None:
+            risk_tags_json = payload.get("risks_json") or "[]"
+        conn.execute(
+            """
+            INSERT INTO assessments (
+                id, target_id, run_id, provider, confidence,
+                profile_fit, activation_signal, evidence_confidence, freshness, action_queue,
+                summary_thesis, fit_rationale, activation_rationale, outreach_angle, draft_subject, draft_body,
+                signal_tags_json, risk_tags_json, unknowns_json, evidence_json,
+                source_date, raw_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(payload["id"]),
+                int(payload["target_id"]),
+                int(payload["run_id"]),
+                str(payload["provider"]),
+                float(payload.get("confidence", 0.0)),
+                str(payload.get("profile_fit") or "unknown"),
+                str(payload.get("activation_signal") or "unknown"),
+                str(payload.get("evidence_confidence") or "thin"),
+                str(payload.get("freshness") or "unknown"),
+                str(payload.get("action_queue") or "watch"),
+                summary_thesis,
+                fit_rationale,
+                activation_rationale,
+                str(payload.get("outreach_angle") or ""),
+                str(payload.get("draft_subject") or ""),
+                str(payload.get("draft_body") or ""),
+                str(payload.get("signal_tags_json") or "[]"),
+                str(risk_tags_json),
+                str(payload.get("unknowns_json") or "[]"),
+                str(payload.get("evidence_json") or "[]"),
+                str(payload["source_date"]) if payload.get("source_date") is not None else None,
+                str(payload.get("raw_json") or "{}"),
+                str(payload.get("created_at") or ""),
+            ),
+        )
+
+    conn.execute("DROP TABLE assessments_legacy")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_assessments_target_run ON assessments(target_id, run_id)")

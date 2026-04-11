@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -31,6 +32,17 @@ class LeadOpsTests(unittest.TestCase):
         conn = connect(config.database_path)
         self.addCleanup(conn.close)
         return Repository(conn)
+
+    def _candidate_queue_items(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        queues = payload.get("queues", {})
+        if not isinstance(queues, dict):
+            return []
+        items: list[dict[str, object]] = []
+        for queue_name in ("pursue_now", "watch", "nurture"):
+            queue_items = queues.get(queue_name, [])
+            if isinstance(queue_items, list):
+                items.extend(item for item in queue_items if isinstance(item, dict))
+        return items
 
     def test_dedupe_prefers_domain(self) -> None:
         self.assertEqual(dedupe_key("founder", "Example", "https://www.example.com/app"), "founder:example.com")
@@ -223,7 +235,7 @@ class LeadOpsTests(unittest.TestCase):
             program_arguments=build_program_arguments(
                 repo_root=repo_root,
                 workspace=workspace,
-                approach_name="builder_need",
+                approach_name=None,
                 discover_tracks=[],
                 discover_per_query_limit=2,
                 send_digest=True,
@@ -237,8 +249,9 @@ class LeadOpsTests(unittest.TestCase):
 
         self.assertGreaterEqual(plist_text.count("<key>Hour</key>"), 4)
         self.assertIn("<integer>17</integer>", plist_text)
+        self.assertNotIn("--approach", plist_text)
 
-    def test_builder_need_approach_caps_connectors_in_packet(self) -> None:
+    def test_run_daily_preserves_approach_context_when_provided(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
             fake_provider = Path(__file__).with_name("fake_provider.py").resolve()
@@ -287,14 +300,14 @@ timeout_seconds = 30
 
             result = run_daily(repo, config, "2026-04-09", approach=get_approach("builder_need"))
 
-            self.assertEqual(result.surfaced_new, 2)
+            self.assertEqual(result.surfaced_new, 3)
             payload = json.loads((workspace / "outbox" / "2026-04-09" / "daily-brief.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
-            surfaced = payload["new_targets"]
-            self.assertEqual(len(surfaced), 2)
+            surfaced = self._candidate_queue_items(payload)
+            self.assertEqual(len(surfaced), 3)
             surfaced_kinds = [item["target"]["kind"] for item in surfaced]
             self.assertEqual(surfaced_kinds.count("founder"), 1)
-            self.assertEqual(surfaced_kinds.count("connector"), 1)
+            self.assertEqual(surfaced_kinds.count("connector"), 2)
             digest_text = (workspace / "outbox" / "2026-04-09" / "daily-digest.txt").read_text(encoding="utf-8")
             digest_html = (workspace / "outbox" / "2026-04-09" / "daily-digest.html").read_text(encoding="utf-8")
             self.assertIn("Run context", digest_text)
@@ -321,7 +334,7 @@ timeout_seconds = 30
 
             self.assertEqual(result.surfaced_new, 0)
 
-    def test_cli_run_daily_defaults_to_builder_need_without_forcing_discovery(self) -> None:
+    def test_cli_run_daily_uses_no_approach_by_default(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
             workspace = initialize_workspace(Path(tmp))
             repo = self._repo_for_workspace(workspace)
@@ -337,8 +350,7 @@ timeout_seconds = 30
 
             self.assertEqual(exit_code, 0)
             payload = json.loads((workspace / "outbox" / "2026-04-09" / "daily-brief.json").read_text(encoding="utf-8"))
-            self.assertEqual(payload["run_context"]["approach"]["name"], "builder_need")
-            self.assertEqual(payload["run_context"]["approach"]["label"], "Founder Needs Builder")
+            self.assertIsNone(payload["run_context"]["approach"])
 
     def test_cli_requires_existing_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
@@ -382,6 +394,104 @@ timeout_seconds = 30
             self.assertEqual(payload["avoided"][0]["name"], "Avoided Studio")
             self.assertIn("idea-to-launch", payload["liked"][0]["reason"])
             self.assertIn("advisory", payload["avoided"][0]["reason"])
+
+    def test_initialize_database_migrates_legacy_assessments_schema(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            db_path = Path(tmp) / "legacy.db"
+            conn = sqlite3.connect(db_path)
+            conn.executescript(
+                """
+                CREATE TABLE targets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT NOT NULL,
+                    url TEXT,
+                    domain TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    raw_evidence TEXT NOT NULL DEFAULT '',
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'candidate',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_packeted_at TEXT,
+                    next_followup_at TEXT
+                );
+                CREATE TABLE daily_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_date TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    status TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE assessments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_id INTEGER NOT NULL,
+                    run_id INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    fit_score REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    recommend INTEGER NOT NULL,
+                    profile_fit TEXT NOT NULL DEFAULT 'unknown',
+                    activation_signal TEXT NOT NULL DEFAULT 'unknown',
+                    evidence_confidence TEXT NOT NULL DEFAULT 'thin',
+                    freshness TEXT NOT NULL DEFAULT 'unknown',
+                    action_queue TEXT NOT NULL DEFAULT 'watch',
+                    why_fit TEXT NOT NULL,
+                    why_now TEXT NOT NULL,
+                    summary_thesis TEXT NOT NULL DEFAULT '',
+                    outreach_angle TEXT NOT NULL,
+                    draft_subject TEXT NOT NULL,
+                    draft_body TEXT NOT NULL,
+                    signal_tags_json TEXT NOT NULL DEFAULT '[]',
+                    risk_tags_json TEXT NOT NULL DEFAULT '[]',
+                    unknowns_json TEXT NOT NULL DEFAULT '[]',
+                    risks_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    rubric_json TEXT NOT NULL,
+                    source_date TEXT,
+                    raw_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO targets (
+                    id, kind, name, normalized_name, source, dedupe_key, status, created_at, updated_at
+                ) VALUES (
+                    1, 'founder', 'Legacy Co', 'legacy co', 'manual', 'founder:legacy.example',
+                    'candidate', '2026-04-09T00:00:00Z', '2026-04-09T00:00:00Z'
+                );
+                INSERT INTO daily_runs (id, run_date, started_at, status, notes)
+                VALUES (1, '2026-04-09', '2026-04-09T00:00:00Z', 'done', '');
+                INSERT INTO assessments (
+                    target_id, run_id, provider, fit_score, confidence, recommend,
+                    profile_fit, activation_signal, evidence_confidence, freshness, action_queue,
+                    why_fit, why_now, summary_thesis, outreach_angle, draft_subject, draft_body,
+                    signal_tags_json, risk_tags_json, unknowns_json, risks_json, evidence_json,
+                    rubric_json, source_date, raw_json, created_at
+                ) VALUES (
+                    1, 1, 'mock', 88.0, 0.9, 1,
+                    'high', 'explicit', 'strong', 'fresh', 'pursue_now',
+                    'Old fit rationale', 'Old activation rationale', '', 'Angle', 'Subject', 'Body',
+                    '["signal"]', '["risk"]', '["budget"]', '["risk"]', '["evidence"]',
+                    '{}', '2026-04-09', '{"id":"legacy"}', '2026-04-09T00:00:00Z'
+                );
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            initialize_database(db_path)
+
+            migrated = connect(db_path)
+            self.addCleanup(migrated.close)
+            row = migrated.execute("SELECT * FROM assessments").fetchone()
+            columns = [item["name"] for item in migrated.execute("PRAGMA table_info(assessments)").fetchall()]
+
+            self.assertNotIn("fit_score", columns)
+            self.assertEqual(row["fit_rationale"], "Old fit rationale")
+            self.assertEqual(row["activation_rationale"], "Old activation rationale")
+            self.assertEqual(row["risk_tags_json"], '["risk"]')
 
     def test_command_provider_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
@@ -553,17 +663,25 @@ timeout_seconds = 30
                         name="Candidate One",
                         url="https://candidate-one.example",
                         confidence=0.9,
-                        fit_score=90,
-                        why_fit="Strong fit one.",
-                        why_now="Strong signal one.",
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Strong candidate one.",
+                        fit_rationale="Strong fit one.",
+                        activation_rationale="Strong signal one.",
                     ),
                     DiscoveryCandidate(
                         name="Candidate Two",
                         url="https://candidate-two.example",
                         confidence=0.8,
-                        fit_score=80,
-                        why_fit="Strong fit two.",
-                        why_now="Strong signal two.",
+                        profile_fit="medium",
+                        activation_signal="inferred",
+                        evidence_confidence="moderate",
+                        freshness="unknown",
+                        summary_thesis="Strong candidate two.",
+                        fit_rationale="Strong fit two.",
+                        activation_rationale="Strong signal two.",
                     ),
                 ],
                 raw_response={"id": "fake-over-limit"},

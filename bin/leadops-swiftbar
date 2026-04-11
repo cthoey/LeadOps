@@ -78,7 +78,12 @@ if not packet_path.exists():
     raise SystemExit(f"Missing packet: {packet_path}")
 
 payload = json.loads(packet_path.read_text(encoding="utf-8"))
-items = list(payload.get("new_targets", [])) + list(payload.get("followups_due", []))
+queues = payload.get("queues", {})
+items = []
+for queue_name in ("pursue_now", "watch", "nurture", "followup_due"):
+    queue_items = queues.get(queue_name, [])
+    if isinstance(queue_items, list):
+        items.extend(queue_items)
 for item in items:
     target = item.get("target", {})
     if int(target.get("id", 0) or 0) != target_id:

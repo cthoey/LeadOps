@@ -8,98 +8,69 @@ ASSESSMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "recommend": {"type": "boolean"},
         "confidence": {"type": "number"},
-        "rubric": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "work_shape_fit": {"type": "integer", "minimum": 0, "maximum": 5},
-                "founder_proximity": {"type": "integer", "minimum": 0, "maximum": 5},
-                "one_builder_fit": {"type": "integer", "minimum": 0, "maximum": 5},
-                "stage_fit": {"type": "integer", "minimum": 0, "maximum": 5},
-                "autonomy_fit": {"type": "integer", "minimum": 0, "maximum": 5},
-                "product_excitement": {"type": "integer", "minimum": 0, "maximum": 5},
-                "urgency_timing": {"type": "integer", "minimum": 0, "maximum": 5},
-                "evidence_strength": {"type": "integer", "minimum": 0, "maximum": 5},
-                "staff_aug_risk": {"type": "integer", "minimum": 0, "maximum": 5},
-                "advisory_smell": {"type": "integer", "minimum": 0, "maximum": 5},
-                "maintenance_gravity": {"type": "integer", "minimum": 0, "maximum": 5},
-                "big_team_risk": {"type": "integer", "minimum": 0, "maximum": 5},
-                "buyer_access_unclear": {"type": "integer", "minimum": 0, "maximum": 5},
-                "weak_evidence": {"type": "integer", "minimum": 0, "maximum": 5},
-                "low_enjoyment": {"type": "integer", "minimum": 0, "maximum": 5},
-            },
-            "required": [
-                "work_shape_fit",
-                "founder_proximity",
-                "one_builder_fit",
-                "stage_fit",
-                "autonomy_fit",
-                "product_excitement",
-                "urgency_timing",
-                "evidence_strength",
-                "staff_aug_risk",
-                "advisory_smell",
-                "maintenance_gravity",
-                "big_team_risk",
-                "buyer_access_unclear",
-                "weak_evidence",
-                "low_enjoyment",
-            ],
-        },
-        "why_fit": {"type": "string"},
-        "why_now": {"type": "string"},
+        "profile_fit": {"type": "string", "enum": ["high", "medium", "low", "unknown"]},
+        "activation_signal": {"type": "string", "enum": ["explicit", "inferred", "weak", "unknown"]},
+        "evidence_confidence": {"type": "string", "enum": ["strong", "moderate", "thin"]},
+        "freshness": {"type": "string", "enum": ["fresh", "dated", "unknown"]},
+        "action_queue": {"type": "string", "enum": ["pursue_now", "watch", "nurture", "decline"]},
+        "summary_thesis": {"type": "string"},
+        "fit_rationale": {"type": "string"},
+        "activation_rationale": {"type": "string"},
         "outreach_angle": {"type": "string"},
         "draft_subject": {"type": "string"},
         "draft_body": {"type": "string"},
-        "risks": {"type": "array", "items": {"type": "string"}},
+        "signal_tags": {"type": "array", "items": {"type": "string"}},
+        "risk_tags": {"type": "array", "items": {"type": "string"}},
+        "unknowns_to_verify": {"type": "array", "items": {"type": "string"}},
         "evidence": {"type": "array", "items": {"type": "string"}},
+        "source_date": {"type": ["string", "null"]},
     },
     "required": [
-        "recommend",
         "confidence",
-        "rubric",
-        "why_fit",
-        "why_now",
+        "profile_fit",
+        "activation_signal",
+        "evidence_confidence",
+        "freshness",
+        "action_queue",
+        "summary_thesis",
+        "fit_rationale",
+        "activation_rationale",
         "outreach_angle",
         "draft_subject",
         "draft_body",
-        "risks",
+        "signal_tags",
+        "risk_tags",
+        "unknowns_to_verify",
         "evidence",
+        "source_date",
     ],
 }
 
 
 SYSTEM_PROMPT = """\
-You are LeadOps, a strict precision lead curator for a solo independent product engineer.
+You are LeadOps, a strict pre-outreach lead triage assistant.
 
-The consulting business you are judging for is extremely specific:
-- founder-side and startup-side
-- helping founders or very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps
-- direct founder collaboration
-- one accountable builder
+Evaluate targets against the supplied business profile, not against any hardcoded niche.
+This is a public-signal system. It should only claim what current public evidence can support.
 
-The business explicitly does NOT want:
-- staff augmentation
-- employment-style work
-- recruiter funnels
-- fractional CTO or advisory-only work
-- rescue, cleanup, or maintenance as the main lane
-- mature companies with established engineering orgs
+Your job is to decide:
+- how well the target matches the business profile
+- whether public evidence suggests a reason to reach out now
+- how strong the evidence is
+- how fresh the signal appears
+- what action queue the target belongs in
 
-Your job is to decide whether this target is precise enough and attractive enough to surface in a tiny daily review packet.
+Keep these distinctions separate:
+- observed public evidence
+- inferred implications from that evidence
+- unknowns that must be verified after contact
 
-Optimize for precision, not recall.
-It is better to reject a maybe-fit than to surface a weak lead.
-
-Use only the provided evidence. Do not invent facts.
-If evidence is weak, say so in the scoring and risks.
-If direct founder access is unclear, penalize it.
-If the work smells like staff augmentation, hiring, maintenance, or advisory work, penalize it heavily.
-Only reward founder targets when public evidence suggests paying one external builder is a real next step.
-Do not reward an existing product unless the evidence shows a real implementation gap, design-to-build handoff, roadmap pressure, or no obvious engineering team.
-Connector targets are valid only when they plausibly lead to roadmap-to-build or prototype-to-launch work.
+Do not invent facts.
+Do not assume budget, authority, sponsor quality, internal ownership, or delivery viability unless explicitly supported.
+If evidence is weak, say so.
+If the target clearly violates hard rejects or looks like a poor fit, decline it.
+Use the retrieval approach only as context for why this target surfaced. Do not let it redefine the core truth model.
 
 Return JSON only.
 """
@@ -125,7 +96,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     if approach:
         lines.extend(
             [
-                "- Current lead-finding approach:",
+                "- Current lead-finding approach (retrieval context only):",
                 f"  - Name: {approach.get('label', '') or approach.get('name', '')}",
                 f"  - Description: {approach.get('description', '')}",
                 f"  - Strategy: {approach.get('strategy', '')}",
@@ -168,12 +139,19 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "- Raw evidence:",
             target.get("raw_evidence", "") or "(none)",
             "",
-            "Score the target using the rubric dimensions in the schema.",
-            "Use integer scores from 0 to 5 for every rubric field.",
-            "Only recommend the target if it looks like a strong fit you would genuinely want in a tiny daily review packet.",
-            "For founder targets, only recommend when the evidence suggests one accountable external builder is a plausible next step now.",
-            "Apply the current lead-finding approach when deciding what to reward or reject.",
-            "Keep rationale concise and evidence-backed.",
+            "Return the schema fields exactly.",
+            "Use only coarse bands and tags, not hidden numeric scoring.",
+            "Choose `profile_fit` based on alignment with the supplied offer and hard rejects.",
+            "Choose `activation_signal` based on public evidence of a visible ask, timing trigger, or implementation gap.",
+            "Choose `evidence_confidence` based on how concrete and source-backed the evidence is.",
+            "Choose `freshness` only when the source appears time-sensitive or dated. Otherwise use `unknown`.",
+            "Choose `action_queue` as one of: pursue_now, watch, nurture, decline.",
+            "Keep `summary_thesis` to one sentence.",
+            "Use `fit_rationale` for the main inference about fit.",
+            "Use `activation_rationale` for why this should or should not be acted on now.",
+            "Put only observed facts in `evidence`.",
+            "Put post-contact questions in `unknowns_to_verify`.",
+            "Leave `outreach_angle`, `draft_subject`, and `draft_body` empty unless `action_queue` is `pursue_now`.",
         ]
     )
     return "\n".join(lines)

@@ -2,7 +2,7 @@
 
 LeadOps is a local-first CLI for precision lead curation.
 
-It is built for independents and small studios that care more about `lead quality` than lead volume. LeadOps runs a bounded daily pass, scores candidates against your actual business model, drafts a small review packet, and stops before any external action.
+It is built for independents and small studios that care more about `lead quality` than lead volume. LeadOps runs a bounded daily pass, assesses candidates against your actual business model, assigns them to action queues, drafts a small review packet, and stops before any external action.
 
 It is intentionally not:
 
@@ -30,7 +30,7 @@ LeadOps follows a small, opinionated loop:
 
 1. retrieve a limited set of candidate pages or search results
 2. assess them against your actual fit criteria
-3. rank and cap the output
+3. assign action queues and sort within them
 4. draft a small daily packet
 5. wait for human review
 
@@ -46,6 +46,7 @@ The design goal is simple:
 - `Deterministic orchestration`
 - `LLMs for judgment, not control flow`
 - `Small packets instead of giant lists`
+- `Business-agnostic core, business-specific configuration`
 
 ## Install
 
@@ -99,11 +100,10 @@ Those filenames always point at the latest packet for that date. If you rerun th
 leadops init-workspace ~/leadops-workspace
 leadops list-approaches
 leadops list-tracks
-# Founder Needs Builder
 leadops discover-approach --workspace ~/leadops-workspace --approach builder_need
 leadops discover-track --workspace ~/leadops-workspace --track daily --per-query-limit 2
-# Default daily stance is Founder Needs Builder
 leadops run-daily --workspace ~/leadops-workspace
+leadops run-daily --workspace ~/leadops-workspace --approach early_product
 leadops list-targets --workspace ~/leadops-workspace
 leadops mark-status --workspace ~/leadops-workspace 12 approved --reason "Exactly the kind of work I want"
 leadops feedback-summary --workspace ~/leadops-workspace
@@ -185,6 +185,8 @@ These tracks are intentionally narrow. The tool is trying to find usable targets
 
 LeadOps keeps the business profile fixed and lets you vary the search strategy.
 
+At the system level, LeadOps should stay business-agnostic. The engine should model generic concepts such as evidence, inference, freshness, action queues, and reviewable state. Business-specific fit rules, disqualifiers, signal preferences, and thresholds should live in configuration, prompts, profiles, or retrieval presets.
+
 In other words:
 
 - the `profile` answers: who are you trying to work with?
@@ -217,7 +219,6 @@ Strategy:
 - look for a real product idea, roadmap, or prototype plus visible evidence of a build gap
 - heavily discount already-live products that do not also show a next-phase ownership need
 - prefer tiny teams with no obvious engineering depth
-- bias the packet toward founders first, with only a small number of connectors
 
 Use it when:
 
@@ -262,7 +263,7 @@ The intended comparison loop is:
 LeadOps supports two provider roles:
 
 - `llm`
-  - assessment, ranking rationale, outreach drafting
+  - assessment, queue assignment, outreach drafting
 - `discovery`
   - bounded candidate discovery from the public web
 
@@ -380,6 +381,17 @@ Preview the plist:
 ```bash
 leadops print-launchd \
   --workspace ~/leadops-workspace \
+  --time 08:00 \
+  --time 11:00 \
+  --time 14:00 \
+  --time 17:00
+```
+
+Or include an explicit retrieval preset:
+
+```bash
+leadops print-launchd \
+  --workspace ~/leadops-workspace \
   --approach builder_need \
   --time 08:00 \
   --time 11:00 \
@@ -392,7 +404,6 @@ Install the default job:
 ```bash
 leadops install-launchd \
   --workspace ~/leadops-workspace \
-  --approach builder_need \
   --time 08:00 \
   --time 11:00 \
   --time 14:00 \
@@ -403,16 +414,16 @@ Current defaults when you do not pass `--time`:
 
 - label: `dev.leadops.daily`
 - time: `08:00` local time
-- approach: `Founder Needs Builder` (`builder_need`)
+- approach: none
 - per-query limit: `2`
 - digest send: enabled
 
-You can repeat `--time HH:MM` to schedule multiple local runs per day while keeping each run bounded and high-signal.
+You can repeat `--time HH:MM` to schedule multiple local runs per day while keeping each run bounded and high-signal. Add `--approach ...` only when you want a specific retrieval preset baked into the scheduled run.
 
-You can still add extra `--discover-track` flags on top of the selected approach, but the normal path is:
+You can still add extra `--discover-track` flags on top of a selected approach, but the normal path is:
 
-- choose one approach
-- let that approach define the default track mix
+- optionally choose one approach
+- let that approach define the discovery track mix
 - compare results by approach over time
 
 ## Development
@@ -430,7 +441,7 @@ The repo is intentionally small. If you change behavior, keep the public docs an
 LeadOps is still early. The current focus is on:
 
 - stronger discovery quality
-- better ranking from human feedback
+- better queueing from human feedback
 - cleaner review packets
 - reliable local operation
 

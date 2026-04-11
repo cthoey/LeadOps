@@ -11,6 +11,16 @@ from leadops.repository import TargetRecord
 from leadops.util import write_text
 
 
+QUEUE_TITLES = {
+    "pursue_now": "Pursue Now",
+    "watch": "Watch",
+    "nurture": "Nurture",
+    "followup_due": "Follow-Ups Due",
+}
+
+CANDIDATE_QUEUE_ORDER = ("pursue_now", "watch", "nurture")
+
+
 @dataclass(slots=True)
 class BriefItem:
     target: TargetRecord
@@ -26,21 +36,25 @@ def render_markdown(
     *,
     approach: ApproachSpec | None = None,
 ) -> str:
+    grouped = _group_items_by_section(new_items)
     lines = [
         f"# LeadOps Daily Brief - {packet_date}",
         "",
-        f"- New targets: {len(new_items)}",
+        f"- Pursue now: {len(grouped.get('pursue_now', []))}",
+        f"- Watch: {len(grouped.get('watch', []))}",
+        f"- Nurture: {len(grouped.get('nurture', []))}",
         f"- Follow-ups due: {len(followup_items)}",
         "",
     ]
     lines.extend(_render_markdown_context(approach))
-    lines.extend(_render_section("New High-Fit Targets", new_items))
-    lines.extend(_render_section("Follow-Ups Due", followup_items))
+    for section in CANDIDATE_QUEUE_ORDER:
+        lines.extend(_render_markdown_section(QUEUE_TITLES[section], grouped.get(section, [])))
+    lines.extend(_render_markdown_section(QUEUE_TITLES["followup_due"], followup_items))
     return "\n".join(lines).rstrip() + "\n"
 
 
 def render_email_subject(packet_date: str, new_items: list[BriefItem], followup_items: list[BriefItem]) -> str:
-    return f"LeadOps Daily Brief - {packet_date} ({len(new_items)} new, {len(followup_items)} follow-ups)"
+    return f"LeadOps Daily Brief - {packet_date} ({len(new_items)} queued, {len(followup_items)} follow-ups)"
 
 
 def render_email_text(
@@ -50,16 +64,20 @@ def render_email_text(
     *,
     approach: ApproachSpec | None = None,
 ) -> str:
+    grouped = _group_items_by_section(new_items)
     lines = [
         f"LeadOps Daily Brief - {packet_date}",
         "",
-        f"New targets: {len(new_items)}",
+        f"Pursue now: {len(grouped.get('pursue_now', []))}",
+        f"Watch: {len(grouped.get('watch', []))}",
+        f"Nurture: {len(grouped.get('nurture', []))}",
         f"Follow-ups due: {len(followup_items)}",
         "",
     ]
     lines.extend(_render_email_context_text(approach))
-    lines.extend(_render_email_section("New High-Fit Targets", new_items))
-    lines.extend(_render_email_section("Follow-Ups Due", followup_items))
+    for section in CANDIDATE_QUEUE_ORDER:
+        lines.extend(_render_email_text_section(QUEUE_TITLES[section], grouped.get(section, [])))
+    lines.extend(_render_email_text_section(QUEUE_TITLES["followup_due"], followup_items))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -70,21 +88,35 @@ def render_email_html(
     *,
     approach: ApproachSpec | None = None,
 ) -> str:
+    grouped = _group_items_by_section(new_items)
     summary = (
         f'<div class="summary-card">'
         f'<div class="summary-label">Daily Brief</div>'
         f'<div class="summary-date">{escape(packet_date)}</div>'
         f'<div class="summary-stats">'
-        f'<span class="pill"><strong>{len(new_items)}</strong> new</span>'
+        f'<span class="pill"><strong>{len(grouped.get("pursue_now", []))}</strong> pursue</span>'
+        f'<span class="pill"><strong>{len(grouped.get("watch", []))}</strong> watch</span>'
+        f'<span class="pill"><strong>{len(grouped.get("nurture", []))}</strong> nurture</span>'
         f'<span class="pill"><strong>{len(followup_items)}</strong> due</span>'
         f"</div>"
         f"</div>"
     )
-    sections = [
-        _render_email_html_context(approach),
-        _render_email_html_section("New High-Fit Targets", new_items, empty_message="No new targets surfaced today."),
-        _render_email_html_section("Follow-Ups Due", followup_items, empty_message="No follow-ups due today."),
-    ]
+    sections = [_render_email_html_context(approach)]
+    for section in CANDIDATE_QUEUE_ORDER:
+        sections.append(
+            _render_email_html_section(
+                QUEUE_TITLES[section],
+                grouped.get(section, []),
+                empty_message=f"No {QUEUE_TITLES[section].lower()} items today.",
+            )
+        )
+    sections.append(
+        _render_email_html_section(
+            QUEUE_TITLES["followup_due"],
+            followup_items,
+            empty_message="No follow-ups due today.",
+        )
+    )
     return "\n".join(
         [
             "<!doctype html>",
@@ -95,7 +127,7 @@ def render_email_html(
             f"<title>{escape(render_email_subject(packet_date, new_items, followup_items))}</title>",
             "<style>",
             "body { margin: 0; padding: 0; background: #f5f7fb; color: #162030; font: 15px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }",
-            ".wrap { max-width: 780px; margin: 0 auto; padding: 24px 16px 40px; }",
+            ".wrap { max-width: 820px; margin: 0 auto; padding: 24px 16px 40px; }",
             ".summary-card { background: linear-gradient(135deg, #162030 0%, #22314d 100%); color: #ffffff; border-radius: 16px; padding: 20px 22px; box-shadow: 0 10px 24px rgba(22, 32, 48, 0.18); }",
             ".summary-label { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.76; }",
             ".summary-date { margin-top: 4px; font-size: 28px; font-weight: 700; }",
@@ -110,10 +142,10 @@ def render_email_html(
             ".title { margin: 0; font-size: 17px; font-weight: 700; color: #162030; }",
             ".title a { color: inherit; text-decoration: none; }",
             ".meta { margin-top: 6px; color: #58667c; font-size: 13px; }",
-            ".score { min-width: 138px; text-align: right; }",
-            ".score strong { display: block; font-size: 18px; color: #162030; }",
-            ".score span { display: block; font-size: 12px; color: #58667c; }",
             ".label { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 5px 8px; border-radius: 999px; background: #eef3f8; color: #314156; font-size: 12px; }",
+            ".status { min-width: 170px; text-align: right; }",
+            ".status strong { display: block; font-size: 13px; color: #162030; text-transform: capitalize; }",
+            ".status span { display: block; font-size: 12px; color: #58667c; }",
             ".grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }",
             ".block { background: #f7f9fc; border-radius: 10px; padding: 12px 13px; }",
             ".block-label { display: block; margin-bottom: 5px; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: #66758c; }",
@@ -122,14 +154,14 @@ def render_email_html(
             ".list li { margin: 4px 0; }",
             ".empty { background: #ffffff; border: 1px dashed #c7d3e3; border-radius: 14px; padding: 18px; color: #58667c; }",
             ".footer { margin-top: 18px; font-size: 12px; color: #66758c; }",
-            "@media (max-width: 640px) { .card-head { display: block; } .score { text-align: left; margin-top: 8px; } }",
+            "@media (max-width: 640px) { .card-head { display: block; } .status { text-align: left; margin-top: 8px; } }",
             "</style>",
             "</head>",
             "<body>",
             '<div class="wrap">',
             summary,
             *sections,
-            '<div class="footer">LeadOps keeps this email intentionally short and only surfaces the strongest candidates for review.</div>',
+            '<div class="footer">LeadOps keeps the packet queue-first so action and uncertainty stay visible.</div>',
             "</div>",
             "</body>",
             "</html>",
@@ -159,14 +191,19 @@ def write_packet(
     markdown = render_markdown(packet_date, new_items, followup_items, approach=approach)
     digest_text = render_email_text(packet_date, new_items, followup_items, approach=approach)
     digest_html = render_email_html(packet_date, new_items, followup_items, approach=approach)
+    grouped = _group_items_by_section(new_items)
     payload = {
         "packet_date": packet_date,
         "run_context": {
             "approach": approach.as_payload() if approach else None,
             "packet_version": version,
         },
-        "new_targets": [_item_to_dict(item) for item in new_items],
-        "followups_due": [_item_to_dict(item) for item in followup_items],
+        "queues": {
+            "pursue_now": [_item_to_dict(item) for item in grouped.get("pursue_now", [])],
+            "watch": [_item_to_dict(item) for item in grouped.get("watch", [])],
+            "nurture": [_item_to_dict(item) for item in grouped.get("nurture", [])],
+            "followup_due": [_item_to_dict(item) for item in followup_items],
+        },
     }
 
     write_text(markdown_path, markdown)
@@ -195,7 +232,7 @@ def _render_markdown_context(approach: ApproachSpec | None) -> list[str]:
     return lines
 
 
-def _render_section(title: str, items: list[BriefItem]) -> list[str]:
+def _render_markdown_section(title: str, items: list[BriefItem]) -> list[str]:
     lines = [f"## {title}", ""]
     if not items:
         lines.extend(["None today.", ""])
@@ -211,42 +248,55 @@ def _render_section(title: str, items: list[BriefItem]) -> list[str]:
                 f"- Kind: `{target.kind}`",
                 f"- Source: `{target.source}`",
                 f"- URL: {target.url or 'n/a'}",
-                f"- Score: `{assessment.fit_score:.1f}`",
+                f"- Profile fit: `{assessment.profile_fit}`",
+                f"- Activation: `{assessment.activation_signal}`",
+                f"- Evidence confidence: `{assessment.evidence_confidence}`",
+                f"- Freshness: `{assessment.freshness}`",
                 f"- Confidence: `{assessment.confidence:.2f}`",
-                f"- Why fit: {assessment.why_fit}",
-                f"- Why now: {assessment.why_now}",
-                f"- Outreach angle: {assessment.outreach_angle}",
-                "",
-                "Draft subject:",
-                "",
-                "```text",
-                assessment.draft_subject,
-                "```",
-                "",
-                "Draft body:",
-                "",
-                "```text",
-                assessment.draft_body,
-                "```",
+                f"- Thesis: {assessment.summary_thesis}",
+                f"- Fit rationale: {assessment.fit_rationale}",
+                f"- Activation rationale: {assessment.activation_rationale}",
                 "",
             ]
         )
+        if assessment.signal_tags:
+            lines.append(f"- Signal tags: {', '.join(f'`{tag}`' for tag in assessment.signal_tags)}")
+        if assessment.risk_tags:
+            lines.append(f"- Risk tags: {', '.join(f'`{tag}`' for tag in assessment.risk_tags)}")
+        if assessment.source_date:
+            lines.append(f"- Source date: `{assessment.source_date}`")
         if assessment.evidence:
-            lines.append("Evidence:")
-            lines.append("")
+            lines.extend(["", "Evidence:", ""])
             for evidence in assessment.evidence:
                 lines.append(f"- {evidence}")
-            lines.append("")
-        if assessment.risks:
-            lines.append("Risks:")
-            lines.append("")
-            for risk in assessment.risks:
-                lines.append(f"- {risk}")
-            lines.append("")
+        if assessment.unknowns_to_verify:
+            lines.extend(["", "Unknowns to verify:", ""])
+            for unknown in assessment.unknowns_to_verify:
+                lines.append(f"- {unknown}")
+        if assessment.is_outreach_ready:
+            lines.extend(
+                [
+                    "",
+                    f"- Outreach angle: {assessment.outreach_angle}",
+                    "",
+                    "Draft subject:",
+                    "",
+                    "```text",
+                    assessment.draft_subject,
+                    "```",
+                    "",
+                    "Draft body:",
+                    "",
+                    "```text",
+                    assessment.draft_body,
+                    "```",
+                ]
+            )
+        lines.append("")
     return lines
 
 
-def _item_to_dict(item: BriefItem) -> dict:
+def _item_to_dict(item: BriefItem) -> dict[str, object]:
     return {
         "rank_index": item.rank_index,
         "section": item.section,
@@ -264,7 +314,7 @@ def _item_to_dict(item: BriefItem) -> dict:
     }
 
 
-def _render_email_section(title: str, items: list[BriefItem]) -> list[str]:
+def _render_email_text_section(title: str, items: list[BriefItem]) -> list[str]:
     lines = [title, "-" * len(title)]
     if not items:
         lines.extend(["None today.", ""])
@@ -278,13 +328,24 @@ def _render_email_section(title: str, items: list[BriefItem]) -> list[str]:
                 f"{item.rank_index}. {target.name} [{target.kind}]",
                 f"   Source: {target.source}",
                 f"   URL: {target.url or 'n/a'}",
-                f"   Score / confidence: {assessment.fit_score:.1f} / {assessment.confidence:.2f}",
-                f"   Why fit: {assessment.why_fit}",
-                f"   Why now: {assessment.why_now}",
-                f"   Subject: {assessment.draft_subject}",
-                "",
+                f"   Fit / activation / evidence / freshness: {assessment.profile_fit} / {assessment.activation_signal} / {assessment.evidence_confidence} / {assessment.freshness}",
+                f"   Thesis: {assessment.summary_thesis}",
+                f"   Fit rationale: {assessment.fit_rationale}",
+                f"   Activation rationale: {assessment.activation_rationale}",
             ]
         )
+        if assessment.risk_tags:
+            lines.append(f"   Risk tags: {', '.join(assessment.risk_tags)}")
+        if assessment.unknowns_to_verify:
+            lines.append(f"   Unknowns: {', '.join(assessment.unknowns_to_verify)}")
+        if assessment.is_outreach_ready:
+            lines.extend(
+                [
+                    f"   Subject: {assessment.draft_subject}",
+                    f"   Outreach angle: {assessment.outreach_angle}",
+                ]
+            )
+        lines.append("")
     return lines
 
 
@@ -342,31 +403,49 @@ def _render_email_html_item(item: BriefItem) -> str:
             f'<span class="label">{escape(target.kind)}</span>',
             f'<span class="label">{escape(target.source)}</span>',
             f'<span class="label">rank {item.rank_index}</span>',
+            f'<span class="label">fit {escape(assessment.profile_fit)}</span>',
+            f'<span class="label">activation {escape(assessment.activation_signal)}</span>',
+            f'<span class="label">evidence {escape(assessment.evidence_confidence)}</span>',
+            f'<span class="label">freshness {escape(assessment.freshness)}</span>',
         ]
     )
     evidence = _render_html_list(assessment.evidence)
-    risks = _render_html_list(assessment.risks)
+    risks = _render_html_list(assessment.risk_tags)
+    unknowns = _render_html_list(assessment.unknowns_to_verify)
+    signals = _render_html_list(assessment.signal_tags)
     url = escape(target.url or "")
     title = escape(target.name)
     title_html = f'<a href="{url}">{title}</a>' if target.url else title
+    outreach_blocks = ""
+    if assessment.is_outreach_ready:
+        outreach_blocks = (
+            f'<div class="block"><span class="block-label">Outreach subject</span>{escape(assessment.draft_subject)}</div>'
+            f'<div class="block"><span class="block-label">Outreach angle</span>{escape(assessment.outreach_angle)}</div>'
+            f'<div class="block"><span class="block-label">Draft body</span><div class="body-copy">{escape(assessment.draft_body)}</div></div>'
+        )
+    source_date_html = (
+        f'<div class="block"><span class="block-label">Source date</span>{escape(assessment.source_date)}</div>'
+        if assessment.source_date
+        else ""
+    )
     return (
         '<article class="card">'
         '<div class="card-head">'
         f'<div><h3 class="title">{title_html}</h3>'
         f'<div class="meta">{labels}</div></div>'
-        f'<div class="score"><strong>{assessment.fit_score:.1f}</strong>'
-        f'<span>fit score</span>'
-        f'<strong>{assessment.confidence:.2f}</strong>'
-        f'<span>confidence</span></div>'
+        f'<div class="status"><strong>{escape(assessment.action_queue.replace("_", " "))}</strong>'
+        f'<span>{assessment.confidence:.2f} confidence</span></div>'
         '</div>'
         '<div class="grid">'
-        f'<div class="block"><span class="block-label">Why fit</span>{escape(assessment.why_fit)}</div>'
-        f'<div class="block"><span class="block-label">Why now</span>{escape(assessment.why_now)}</div>'
-        f'<div class="block"><span class="block-label">Outreach subject</span>{escape(assessment.draft_subject)}</div>'
-        f'<div class="block"><span class="block-label">Outreach angle</span>{escape(assessment.outreach_angle)}</div>'
-        f'<div class="block"><span class="block-label">Draft body</span><div class="body-copy">{escape(assessment.draft_body)}</div></div>'
-        f'<div class="block"><span class="block-label">Evidence</span>{evidence}</div>'
-        f'<div class="block"><span class="block-label">Risks</span>{risks}</div>'
+        f'<div class="block"><span class="block-label">Thesis</span>{escape(assessment.summary_thesis)}</div>'
+        f'<div class="block"><span class="block-label">Fit rationale</span>{escape(assessment.fit_rationale)}</div>'
+        f'<div class="block"><span class="block-label">Activation rationale</span>{escape(assessment.activation_rationale)}</div>'
+        f'<div class="block"><span class="block-label">Signal tags</span>{signals}</div>'
+        f'<div class="block"><span class="block-label">Risk tags</span>{risks}</div>'
+        f'<div class="block"><span class="block-label">Public evidence</span>{evidence}</div>'
+        f'<div class="block"><span class="block-label">Unknowns to verify</span>{unknowns}</div>'
+        f"{source_date_html}"
+        f"{outreach_blocks}"
         '</div>'
         '</article>'
     )
@@ -376,3 +455,10 @@ def _render_html_list(items: list[str]) -> str:
     if not items:
         return '<div class="meta">None noted.</div>'
     return '<ul class="list">' + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>"
+
+
+def _group_items_by_section(items: list[BriefItem]) -> dict[str, list[BriefItem]]:
+    grouped: dict[str, list[BriefItem]] = {}
+    for item in items:
+        grouped.setdefault(item.section, []).append(item)
+    return grouped

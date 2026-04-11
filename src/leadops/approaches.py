@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,8 +13,6 @@ class ApproachSpec:
     prioritize: tuple[str, ...]
     reject: tuple[str, ...]
     default_per_query_limit: int = 2
-    packet_kind_order: tuple[str, ...] = ("founder", "connector")
-    packet_kind_caps: dict[str, int] = field(default_factory=dict)
 
     def as_payload(self) -> dict[str, object]:
         return {
@@ -26,8 +24,6 @@ class ApproachSpec:
             "prioritize": list(self.prioritize),
             "reject": list(self.reject),
             "default_per_query_limit": self.default_per_query_limit,
-            "packet_kind_order": list(self.packet_kind_order),
-            "packet_kind_caps": dict(self.packet_kind_caps),
         }
 
 
@@ -83,8 +79,6 @@ BUILDER_NEED = ApproachSpec(
         "mature teams",
     ),
     default_per_query_limit=2,
-    packet_kind_order=("founder", "connector"),
-    packet_kind_caps={"founder": 2, "connector": 1},
 )
 
 

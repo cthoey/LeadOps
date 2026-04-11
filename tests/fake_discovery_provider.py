@@ -13,9 +13,13 @@ def main() -> int:
                 "name": "Proto Foundry",
                 "url": "https://protofoundry.example",
                 "confidence": 0.93,
-                "fit_score": 91,
-                "why_fit": f"Strong founder-side build fit surfaced for query: {query}",
-                "why_now": "Recent prototype-stage messaging and launch intent are visible.",
+                "profile_fit": "high",
+                "activation_signal": "explicit",
+                "evidence_confidence": "strong",
+                "freshness": "fresh",
+                "summary_thesis": "Strong public signs point to project-shaped software work worth reviewing.",
+                "fit_rationale": f"Visible public signals align well with the search: {query}",
+                "activation_rationale": "Recent prototype-stage messaging and launch intent are visible.",
                 "evidence": [
                     "Founder describes the product as a prototype heading toward launch.",
                     "No visible hiring or staff-augmentation framing.",
@@ -24,9 +28,14 @@ def main() -> int:
                     "https://protofoundry.example",
                     "https://signals.example/protofoundry",
                 ],
-                "risks": [
+                "signal_tags": [
+                    "prototype",
+                    "launch_pressure",
+                ],
+                "risk_tags": [
                     "Budget is not visible from public evidence.",
                 ],
+                "source_date": "2026-04-09",
             }
         ],
         "raw_response": {

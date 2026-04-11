@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 from pathlib import Path
 
@@ -112,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_daily_cmd.add_argument(
         "--approach",
         choices=[spec.name for spec in list_approaches()],
-        help="Optional lead-finding approach to run before assessment and apply during ranking.",
+        help="Optional lead-finding approach to run before assessment and pass through as retrieval context.",
     )
     run_daily_cmd.add_argument(
         "--discover-track",
@@ -143,7 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
     mark_status.add_argument("--followup-date", default=None)
     mark_status.add_argument("--reason", default="")
 
-    feedback_summary = subparsers.add_parser("feedback-summary", help="Show the recent decisions fed back into ranking.")
+    feedback_summary = subparsers.add_parser(
+        "feedback-summary",
+        help="Show the recent decisions fed back into discovery and assessment context.",
+    )
     feedback_summary.add_argument("--workspace", required=True, help="Workspace path.")
     feedback_summary.add_argument("--limit-per-action", type=int, default=3)
 
@@ -178,31 +182,31 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "add-target":
-        repo = _repo_for_workspace(Path(args.workspace))
-        target_id, action = repo.add_or_update_target(
-            kind=args.kind,
-            name=args.name,
-            url=args.url.strip() or None,
-            source=args.source,
-            notes=args.notes,
-            raw_evidence=args.raw_evidence,
-        )
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            target_id, action = repo.add_or_update_target(
+                kind=args.kind,
+                name=args.name,
+                url=args.url.strip() or None,
+                source=args.source,
+                notes=args.notes,
+                raw_evidence=args.raw_evidence,
+            )
         print(f"{action.capitalize()} target {target_id}: {args.name}")
         return 0
 
     if args.command == "ingest-url":
-        repo = _repo_for_workspace(Path(args.workspace))
-        extracted = fetch_and_extract(args.url)
-        name = args.name.strip() or extracted.lead_name()
-        notes_parts = [part for part in [args.notes.strip(), extracted.meta_description.strip()] if part]
-        target_id, action = repo.add_or_update_target(
-            kind=args.kind,
-            name=name,
-            url=extracted.final_url,
-            source=args.source,
-            notes="\n\n".join(notes_parts),
-            raw_evidence=extracted.raw_evidence(),
-        )
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            extracted = fetch_and_extract(args.url)
+            name = args.name.strip() or extracted.lead_name()
+            notes_parts = [part for part in [args.notes.strip(), extracted.meta_description.strip()] if part]
+            target_id, action = repo.add_or_update_target(
+                kind=args.kind,
+                name=name,
+                url=extracted.final_url,
+                source=args.source,
+                notes="\n\n".join(notes_parts),
+                raw_evidence=extracted.raw_evidence(),
+            )
         print(f"{action.capitalize()} target {target_id}: {name}")
         print(f"Final URL: {extracted.final_url}")
         if extracted.title:
@@ -210,8 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "import-jsonl":
-        repo = _repo_for_workspace(Path(args.workspace))
-        created, updated = repo.import_jsonl(Path(args.path).expanduser())
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            created, updated = repo.import_jsonl(Path(args.path).expanduser())
         print(f"Imported targets from {args.path}")
         print(f"Created: {created}")
         print(f"Updated: {updated}")
@@ -220,17 +224,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "discover-web":
         workspace = Path(args.workspace).expanduser().resolve()
         config = _load_existing_workspace_config(workspace)
-        repo = _repo_for_workspace(workspace)
-        approach = get_approach(args.approach) if args.approach else None
-        result = discover_web(
-            repo,
-            config,
-            query=args.query,
-            kind=args.kind,
-            limit=max(1, args.limit),
-            source=args.source,
-            approach=approach,
-        )
+        with closing(_repo_for_workspace(workspace)) as repo:
+            approach = get_approach(args.approach) if args.approach else None
+            result = discover_web(
+                repo,
+                config,
+                query=args.query,
+                kind=args.kind,
+                limit=max(1, args.limit),
+                source=args.source,
+                approach=approach,
+            )
         print(f"Discovery complete for query run {result.query_run_id}")
         print(f"Candidates returned: {result.total_candidates}")
         print(f"Created: {result.created}")
@@ -254,58 +258,58 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "discover-track":
         workspace = Path(args.workspace).expanduser().resolve()
         config = _load_existing_workspace_config(workspace)
-        repo = _repo_for_workspace(workspace)
-        approach = get_approach(args.approach) if hasattr(args, "approach") and args.approach else None
-        result = discover_track(
-            repo,
-            config,
-            track=get_track(args.track),
-            limit_override=args.per_query_limit,
-            source_prefix=args.source_prefix,
-            approach=approach,
-        )
+        with closing(_repo_for_workspace(workspace)) as repo:
+            approach = get_approach(args.approach) if hasattr(args, "approach") and args.approach else None
+            result = discover_track(
+                repo,
+                config,
+                track=get_track(args.track),
+                limit_override=args.per_query_limit,
+                source_prefix=args.source_prefix,
+                approach=approach,
+            )
         _print_track_result(result)
         return 0
 
     if args.command == "discover-approach":
         workspace = Path(args.workspace).expanduser().resolve()
         config = _load_existing_workspace_config(workspace)
-        repo = _repo_for_workspace(workspace)
-        approach = get_approach(args.approach)
-        result = _run_approach_discovery(
-            repo,
-            config,
-            approach=approach,
-            per_query_limit=args.per_query_limit,
-            source_prefix=args.source_prefix,
-        )
+        with closing(_repo_for_workspace(workspace)) as repo:
+            approach = get_approach(args.approach)
+            result = _run_approach_discovery(
+                repo,
+                config,
+                approach=approach,
+                per_query_limit=args.per_query_limit,
+                source_prefix=args.source_prefix,
+            )
         _print_approach_result(approach.label, result)
         return 0
 
     if args.command == "run-daily":
         workspace = Path(args.workspace).expanduser().resolve()
         config = _load_existing_workspace_config(workspace)
-        repo = _repo_for_workspace(workspace)
-        explicit_approach = bool(args.approach)
-        approach = get_approach(args.approach) if args.approach else get_approach("builder_need")
-        if explicit_approach:
-            approach_result = _run_approach_discovery(
-                repo,
-                config,
-                approach=approach,
-                per_query_limit=args.discover_per_query_limit,
-            )
-            _print_approach_result(approach.label, approach_result)
-        for track_name in args.discover_track:
-            track_result = discover_track(
-                repo,
-                config,
-                track=get_track(track_name),
-                limit_override=args.discover_per_query_limit,
-                approach=approach,
-            )
-            _print_track_result(track_result)
-        result = run_daily(repo, config, args.date, approach=approach, send_digest=args.send_digest)
+        with closing(_repo_for_workspace(workspace)) as repo:
+            explicit_approach = bool(args.approach)
+            approach = get_approach(args.approach) if args.approach else None
+            if explicit_approach:
+                approach_result = _run_approach_discovery(
+                    repo,
+                    config,
+                    approach=approach,
+                    per_query_limit=args.discover_per_query_limit,
+                )
+                _print_approach_result(approach.label, approach_result)
+            for track_name in args.discover_track:
+                track_result = discover_track(
+                    repo,
+                    config,
+                    track=get_track(track_name),
+                    limit_override=args.discover_per_query_limit,
+                    approach=approach,
+                )
+                _print_track_result(track_result)
+            result = run_daily(repo, config, args.date, approach=approach, send_digest=args.send_digest)
         print(f"Run complete for {args.date}")
         print(f"Approach: {approach.label if approach else '(none)'}")
         print(f"New targets surfaced: {result.surfaced_new}")
@@ -318,27 +322,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "list-targets":
-        repo = _repo_for_workspace(Path(args.workspace))
-        for target in repo.list_targets():
-            print(
-                f"{target.id}\t{target.kind}\t{target.status}\t{target.name}\t{target.source}\t{target.url or '-'}"
-            )
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            for target in repo.list_targets():
+                print(
+                    f"{target.id}\t{target.kind}\t{target.status}\t{target.name}\t{target.source}\t{target.url or '-'}"
+                )
         return 0
 
     if args.command == "mark-status":
-        repo = _repo_for_workspace(Path(args.workspace))
-        repo.update_status(
-            args.target_id,
-            status=args.status,
-            followup_date=args.followup_date,
-            reason=args.reason,
-        )
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            repo.update_status(
+                args.target_id,
+                status=args.status,
+                followup_date=args.followup_date,
+                reason=args.reason,
+            )
         print(f"Updated target {args.target_id} -> {args.status}")
         return 0
 
     if args.command == "feedback-summary":
-        repo = _repo_for_workspace(Path(args.workspace))
-        payload = repo.feedback_context_payload(limit_per_action=max(1, args.limit_per_action))
+        with closing(_repo_for_workspace(Path(args.workspace))) as repo:
+            payload = repo.feedback_context_payload(limit_per_action=max(1, args.limit_per_action))
         print("Liked / advanced patterns:")
         if payload["liked"]:
             for item in payload["liked"]:
@@ -467,20 +471,26 @@ def _print_approach_result(approach_label: str, results: list[DiscoveryTrackResu
 
 
 def _email_subject_from_packet_payload(packet_date: str, payload: dict[str, object]) -> str:
+    queues = _queues_from_payload(payload)
     return render_email_subject(
         packet_date,
-        new_items=[None] * len(payload.get("new_targets", [])),
-        followup_items=[None] * len(payload.get("followups_due", [])),
+        new_items=[None] * sum(len(items) for queue_name, items in queues.items() if queue_name != "followup_due"),
+        followup_items=[None] * len(queues.get("followup_due", [])),
     )
 
 
 def _email_html_from_payload(packet_date: str, payload: dict[str, object]) -> str:
     run_context = payload.get("run_context", {})
     approach = _approach_from_payload(run_context.get("approach")) if isinstance(run_context, dict) else None
+    queues = _queues_from_payload(payload)
     return render_email_html(
         packet_date,
-        new_items=[_brief_item_from_payload(item, "new_target") for item in payload.get("new_targets", [])],
-        followup_items=[_brief_item_from_payload(item, "followup") for item in payload.get("followups_due", [])],
+        new_items=[
+            _brief_item_from_payload(item, queue_name)
+            for queue_name in ("pursue_now", "watch", "nurture")
+            for item in queues.get(queue_name, [])
+        ],
+        followup_items=[_brief_item_from_payload(item, "followup_due") for item in queues.get("followup_due", [])],
         approach=approach,
     )
 
@@ -527,14 +537,19 @@ def _approach_from_payload(payload: object) -> ApproachSpec | None:
         prioritize=tuple(str(item) for item in payload.get("prioritize", []) if str(item).strip()),
         reject=tuple(str(item) for item in payload.get("reject", []) if str(item).strip()),
         default_per_query_limit=int(payload.get("default_per_query_limit", 2) or 2),
-        packet_kind_order=tuple(str(item) for item in payload.get("packet_kind_order", []) if str(item).strip())
-        or ("founder", "connector"),
-        packet_kind_caps={
-            str(key): int(value)
-            for key, value in dict(payload.get("packet_kind_caps", {})).items()
-            if str(key).strip()
-        },
     )
+
+
+def _queues_from_payload(payload: dict[str, object]) -> dict[str, list[dict[str, object]]]:
+    queues = payload.get("queues", {})
+    if not isinstance(queues, dict):
+        return {}
+    normalized: dict[str, list[dict[str, object]]] = {}
+    for queue_name, items in queues.items():
+        if not isinstance(items, list):
+            continue
+        normalized[str(queue_name)] = [item for item in items if isinstance(item, dict)]
+    return normalized
 
 
 def _add_launchd_arguments(parser: argparse.ArgumentParser) -> None:
@@ -550,9 +565,8 @@ def _add_launchd_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--approach",
-        default="builder_need",
         choices=[spec.name for spec in list_approaches()],
-        help="Lead-finding approach to run during the scheduled pass.",
+        help="Optional lead-finding approach to run during the scheduled pass.",
     )
     parser.add_argument(
         "--discover-track",

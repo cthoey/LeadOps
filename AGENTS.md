@@ -40,6 +40,9 @@ If README examples, release notes, or comments drift from the actual command sur
   - Use models for bounded discovery, assessment, and drafting. Do not make them the control plane.
 - `Keep the tool small`
   - Prefer a simple local workflow over dashboards, services, or architecture that the product does not need.
+- `Business-agnostic core, business-specific configuration`
+  - Keep the engine generic. Core concepts such as evidence, inference, freshness, queues, and qualification stages should work across many businesses.
+  - Business-specific fit rules, thresholds, signal preferences, and disqualifiers should live in configuration, prompts, profiles, or retrieval presets rather than hard-coded engine assumptions.
 
 ## Public-Facing Hygiene
 
@@ -73,6 +76,7 @@ When making changes, preserve these boundaries unless there is a strong reason t
 - `run-daily` is the main operating loop.
 - Discovery and assessment providers should use structured inputs and outputs.
 - Packet generation should stay finite and reviewable.
+- Generic system behavior should not be tightly coupled to one consulting thesis or buyer type; encode those choices in configurable profiles and presets.
 
 If you propose a larger architectural shift, document why the current model is no longer sufficient.
 

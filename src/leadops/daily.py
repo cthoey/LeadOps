@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from leadops.approaches import ApproachSpec
 from leadops.briefs import BriefItem, render_email_subject, write_packet
 from leadops.config import WorkspaceConfig
 from leadops.mailer import send_email_digest
-from leadops.models import AssessmentResult
+from leadops.models import (
+    ACTION_QUEUE_ORDER,
+    ACTIVATION_SIGNAL_RANK,
+    EVIDENCE_CONFIDENCE_RANK,
+    FRESHNESS_RANK,
+    PROFILE_FIT_RANK,
+    VISIBLE_CANDIDATE_QUEUES,
+    AssessmentResult,
+)
 from leadops.providers import CommandProvider, MockProvider
 from leadops.repository import Repository, TargetRecord
 
@@ -49,7 +57,6 @@ def run_daily(
             run_id=run_id,
             cooldown_cutoff=cooldown_cutoff,
             daily_cap=config.profile.daily_new_lead_cap,
-            section="new_target",
             approach=approach,
             feedback_context=feedback_context,
         )
@@ -75,8 +82,10 @@ def run_daily(
             version=packet_version,
         )
 
-        notes.append(f"new_targets={len(candidate_items)}")
-        notes.append(f"followups_due={len(followup_items)}")
+        notes.append(f"pursue_now={sum(1 for item in candidate_items if item.section == 'pursue_now')}")
+        notes.append(f"watch={sum(1 for item in candidate_items if item.section == 'watch')}")
+        notes.append(f"nurture={sum(1 for item in candidate_items if item.section == 'nurture')}")
+        notes.append(f"followup_due={len(followup_items)}")
         if approach:
             notes.append(f"approach={approach.name}")
         digest_sent = False
@@ -99,7 +108,7 @@ def run_daily(
                 assessment_id=assessment_id,
                 section=item.section,
                 rank_index=item.rank_index,
-                score=item.assessment.fit_score,
+                score=item.assessment.priority_score,
                 confidence=item.assessment.confidence,
             )
             repo.mark_packeted(item.target.id, packet_date)
@@ -129,7 +138,6 @@ def _assess_candidates(
     run_id: int,
     cooldown_cutoff: str,
     daily_cap: int,
-    section: str,
     approach: ApproachSpec | None,
     feedback_context: dict[str, list[dict[str, str]]],
 ) -> list[BriefItem]:
@@ -138,15 +146,15 @@ def _assess_candidates(
         if target.last_packeted_at and target.last_packeted_at > cooldown_cutoff:
             continue
         assessment = provider.assess(target, config, approach, feedback_context)
-        if not assessment.recommend or not assessment.rubric.gates_pass(kind=target.kind):
+        if assessment.action_queue not in VISIBLE_CANDIDATE_QUEUES:
             repo.save_assessment(run_id, target.id, provider.name, assessment)
             continue
         eligible.append((target, assessment))
 
-    eligible.sort(key=lambda item: (item[1].fit_score, item[1].confidence), reverse=True)
-    selected = _select_candidates_for_packet(eligible, daily_cap=daily_cap, approach=approach)
+    eligible.sort(key=lambda item: _candidate_sort_key(item[1]))
+    selected = eligible[:daily_cap]
     return [
-        BriefItem(target=target, assessment=assessment, section=section, rank_index=index)
+        BriefItem(target=target, assessment=assessment, section=assessment.action_queue, rank_index=index)
         for index, (target, assessment) in enumerate(selected, start=1)
     ]
 
@@ -165,12 +173,16 @@ def _assess_followups(
     items: list[tuple[TargetRecord, AssessmentResult]] = []
     for target in targets:
         assessment = provider.assess(target, config, approach, feedback_context)
-        assessment.why_now = "This follow-up is already due or overdue."
-        assessment.draft_subject = f"Following up on {target.name}"
+        assessment.action_queue = "followup_due"
+        assessment.activation_rationale = "This follow-up is already due or overdue."
+        if not assessment.draft_subject.strip():
+            assessment.draft_subject = f"Following up on {target.name}"
+        if not assessment.draft_body.strip():
+            assessment.draft_body = f"Checking back in on {target.name} now that the scheduled follow-up is due."
         items.append((target, assessment))
-    items.sort(key=lambda item: (item[0].next_followup_at or "", -item[1].fit_score))
+    items.sort(key=lambda item: (item[0].next_followup_at or "", _followup_sort_key(item[1])))
     return [
-        BriefItem(target=target, assessment=assessment, section="followup", rank_index=index)
+        BriefItem(target=target, assessment=assessment, section="followup_due", rank_index=index)
         for index, (target, assessment) in enumerate(items[:daily_cap], start=1)
     ]
 
@@ -181,44 +193,23 @@ def _provider_for_config(config: WorkspaceConfig) -> CommandProvider | MockProvi
     return MockProvider()
 
 
-def _select_candidates_for_packet(
-    eligible: list[tuple[TargetRecord, AssessmentResult]],
-    *,
-    daily_cap: int,
-    approach: ApproachSpec | None,
-) -> list[tuple[TargetRecord, AssessmentResult]]:
-    if not approach or not approach.packet_kind_caps:
-        return eligible[:daily_cap]
+def _candidate_sort_key(assessment: AssessmentResult) -> tuple[int, int, int, int, float, float]:
+    return (
+        ACTION_QUEUE_ORDER.get(assessment.action_queue, 9),
+        -PROFILE_FIT_RANK.get(assessment.profile_fit, 0),
+        -ACTIVATION_SIGNAL_RANK.get(assessment.activation_signal, 0),
+        -EVIDENCE_CONFIDENCE_RANK.get(assessment.evidence_confidence, 0),
+        -FRESHNESS_RANK.get(assessment.freshness, 0),
+        -assessment.priority_score,
+        -assessment.confidence,
+    )
 
-    selected: list[tuple[TargetRecord, AssessmentResult]] = []
-    selected_ids: set[int] = set()
-    per_kind: dict[str, int] = {}
 
-    for kind in approach.packet_kind_order:
-        kind_cap = approach.packet_kind_caps.get(kind)
-        if kind_cap is None:
-            continue
-        for target, assessment in eligible:
-            if len(selected) >= daily_cap:
-                break
-            if target.id in selected_ids or target.kind != kind:
-                continue
-            if per_kind.get(kind, 0) >= kind_cap:
-                continue
-            selected.append((target, assessment))
-            selected_ids.add(target.id)
-            per_kind[kind] = per_kind.get(kind, 0) + 1
-
-    for target, assessment in eligible:
-        if len(selected) >= daily_cap:
-            break
-        if target.id in selected_ids:
-            continue
-        kind_cap = approach.packet_kind_caps.get(target.kind)
-        if kind_cap is not None and per_kind.get(target.kind, 0) >= kind_cap:
-            continue
-        selected.append((target, assessment))
-        selected_ids.add(target.id)
-        per_kind[target.kind] = per_kind.get(target.kind, 0) + 1
-
-    return selected
+def _followup_sort_key(assessment: AssessmentResult) -> tuple[int, int, int, int, float]:
+    return (
+        -PROFILE_FIT_RANK.get(assessment.profile_fit, 0),
+        -ACTIVATION_SIGNAL_RANK.get(assessment.activation_signal, 0),
+        -EVIDENCE_CONFIDENCE_RANK.get(assessment.evidence_confidence, 0),
+        -FRESHNESS_RANK.get(assessment.freshness, 0),
+        -assessment.priority_score,
+    )

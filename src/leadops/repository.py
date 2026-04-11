@@ -68,6 +68,9 @@ class Repository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
+    def close(self) -> None:
+        self.conn.close()
+
     def add_or_update_target(
         self,
         *,
@@ -242,26 +245,34 @@ class Repository:
         cur = self.conn.execute(
             """
             INSERT INTO assessments (
-                target_id, run_id, provider, fit_score, confidence, recommend, why_fit, why_now,
-                outreach_angle, draft_subject, draft_body, risks_json, evidence_json, rubric_json,
-                raw_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_id, run_id, provider, confidence,
+                profile_fit, activation_signal, evidence_confidence, freshness, action_queue,
+                summary_thesis, fit_rationale, activation_rationale, outreach_angle, draft_subject, draft_body,
+                signal_tags_json, risk_tags_json, unknowns_json, evidence_json,
+                source_date, raw_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 target_id,
                 run_id,
                 provider,
-                assessment.fit_score,
                 assessment.confidence,
-                1 if assessment.recommend else 0,
-                assessment.why_fit,
-                assessment.why_now,
+                assessment.profile_fit,
+                assessment.activation_signal,
+                assessment.evidence_confidence,
+                assessment.freshness,
+                assessment.action_queue,
+                assessment.summary_thesis,
+                assessment.fit_rationale,
+                assessment.activation_rationale,
                 assessment.outreach_angle,
                 assessment.draft_subject,
                 assessment.draft_body,
-                json.dumps(assessment.risks, indent=2),
+                json.dumps(assessment.signal_tags, indent=2),
+                json.dumps(assessment.risk_tags, indent=2),
+                json.dumps(assessment.unknowns_to_verify, indent=2),
                 json.dumps(assessment.evidence, indent=2),
-                json.dumps(assessment.rubric.as_dict(), indent=2),
+                assessment.source_date,
                 json.dumps(assessment.raw_response, indent=2),
                 utcnow(),
             ),
@@ -357,7 +368,7 @@ class Repository:
                 query_run_id,
                 target_id,
                 action,
-                candidate.fit_score,
+                candidate.priority_score,
                 candidate.confidence,
                 json.dumps(candidate.as_dict(), indent=2),
                 utcnow(),

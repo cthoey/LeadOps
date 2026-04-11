@@ -16,23 +16,35 @@ DISCOVERY_SCHEMA: dict[str, Any] = {
                     "name": {"type": "string"},
                     "url": {"type": "string"},
                     "confidence": {"type": "number"},
-                    "fit_score": {"type": "number"},
-                    "why_fit": {"type": "string"},
-                    "why_now": {"type": "string"},
+                    "profile_fit": {"type": "string", "enum": ["high", "medium", "low", "unknown"]},
+                    "activation_signal": {"type": "string", "enum": ["explicit", "inferred", "weak", "unknown"]},
+                    "evidence_confidence": {"type": "string", "enum": ["strong", "moderate", "thin"]},
+                    "freshness": {"type": "string", "enum": ["fresh", "dated", "unknown"]},
+                    "summary_thesis": {"type": "string"},
+                    "fit_rationale": {"type": "string"},
+                    "activation_rationale": {"type": "string"},
                     "evidence": {"type": "array", "items": {"type": "string"}},
                     "source_urls": {"type": "array", "items": {"type": "string"}},
-                    "risks": {"type": "array", "items": {"type": "string"}},
+                    "signal_tags": {"type": "array", "items": {"type": "string"}},
+                    "risk_tags": {"type": "array", "items": {"type": "string"}},
+                    "source_date": {"type": ["string", "null"]},
                 },
                 "required": [
                     "name",
                     "url",
                     "confidence",
-                    "fit_score",
-                    "why_fit",
-                    "why_now",
+                    "profile_fit",
+                    "activation_signal",
+                    "evidence_confidence",
+                    "freshness",
+                    "summary_thesis",
+                    "fit_rationale",
+                    "activation_rationale",
                     "evidence",
                     "source_urls",
-                    "risks",
+                    "signal_tags",
+                    "risk_tags",
+                    "source_date",
                 ],
             },
         }
@@ -42,23 +54,12 @@ DISCOVERY_SCHEMA: dict[str, Any] = {
 
 
 SYSTEM_PROMPT = """\
-You are LeadOps Discovery, a strict precision web-search curator for a solo independent product engineer.
+You are LeadOps Discovery, a strict precision web-search curator for a pre-outreach lead triage system.
 
 Your job is to search the public web for highly aligned outreach targets and return only the few strongest matches.
 
-The consulting business is extremely specific:
-- founder-side and startup-side
-- helping founders or very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps
-- direct founder collaboration
-- one accountable builder
-
-The business explicitly does NOT want:
-- staff augmentation
-- employment-style work
-- recruiter funnels
-- fractional CTO or advisory-only work
-- rescue, cleanup, or maintenance as the main lane
-- mature companies with established engineering orgs
+LeadOps is business-agnostic at the core. Evaluate candidates against the supplied business profile, not against a hardcoded niche.
+This is a public-signal system, so only claim what current public evidence can support.
 
 Optimize aggressively for precision, not recall.
 It is better to return fewer candidates than to surface weak fits.
@@ -70,8 +71,13 @@ Only return candidates with enough public evidence to justify follow-up.
 Do not invent facts.
 Do not hallucinate source URLs.
 If evidence is weak or the work shape is unclear, exclude the candidate.
-Only return founder targets when public evidence suggests paying one external builder is a real next step.
-Do not reward an existing product unless the evidence shows a real implementation gap, design-to-build handoff, roadmap pressure, or no obvious engineering team.
+
+Keep these distinctions separate:
+- observed public evidence
+- inferred implications from that evidence
+- risk or disqualifier signals
+
+Use the retrieval approach only as context for why this search is being run. Do not let it redefine the core truth model.
 
 Return JSON only.
 """
@@ -141,10 +147,15 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "- Return at most the requested number of candidates.",
             "- Prefer official company/founder pages when possible.",
             "- Only include candidates you would genuinely want in a tiny daily review packet.",
-            "- For founder targets, require signs that one accountable external builder is a plausible next step now.",
-            "- Keep evidence concise and source-backed.",
+            "- Keep evidence concise, source-backed, and limited to observed public facts.",
+            "- Set `profile_fit`, `activation_signal`, `evidence_confidence`, and `freshness` using only coarse bands.",
+            "- Use `summary_thesis` for the one-sentence case for surfacing the target.",
+            "- Use `fit_rationale` for the main fit inference.",
+            "- Use `activation_rationale` for why this seems timely or not timely from public evidence.",
+            "- Use `signal_tags` for positive public signals and `risk_tags` for caution or reject signals.",
+            "- Set `source_date` only when the public evidence clearly exposes one.",
             "- If you find fewer than the requested number of strong fits, return fewer.",
-            "- Follow the current lead-finding approach strictly. It changes what counts as a strong result.",
+            "- Use the current lead-finding approach as retrieval context, not as the truth model itself.",
         ]
     )
     return "\n".join(lines)
