@@ -198,7 +198,7 @@ class Repository:
                        status, domain, dedupe_key, last_packeted_at, next_followup_at
                 FROM targets
                 WHERE status IN ('candidate', 'approved')
-                ORDER BY created_at ASC
+                ORDER BY updated_at DESC, created_at DESC
                 """
             ).fetchall()
         else:
@@ -209,7 +209,7 @@ class Repository:
                 FROM targets
                 WHERE status IN ('candidate', 'approved')
                   AND (next_followup_at IS NULL OR next_followup_at <= ?)
-                ORDER BY created_at ASC
+                ORDER BY updated_at DESC, created_at DESC
                 """,
                 (on_or_before,),
             ).fetchall()

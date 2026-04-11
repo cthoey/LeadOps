@@ -20,6 +20,9 @@ from leadops.models import (
 from leadops.providers import CommandProvider, MockProvider
 from leadops.repository import Repository, TargetRecord
 
+DEFAULT_CANDIDATE_ASSESSMENT_WINDOW_MULTIPLIER = 4
+MIN_CANDIDATE_ASSESSMENT_WINDOW = 12
+
 
 @dataclass(slots=True)
 class DailyRunResult:
@@ -141,8 +144,9 @@ def _assess_candidates(
     approach: ApproachSpec | None,
     feedback_context: dict[str, list[dict[str, str]]],
 ) -> list[BriefItem]:
+    candidate_window = max(daily_cap * DEFAULT_CANDIDATE_ASSESSMENT_WINDOW_MULTIPLIER, MIN_CANDIDATE_ASSESSMENT_WINDOW)
     eligible: list[tuple[TargetRecord, AssessmentResult]] = []
-    for target in targets:
+    for target in targets[:candidate_window]:
         if target.last_packeted_at and target.last_packeted_at > cooldown_cutoff:
             continue
         assessment = provider.assess(target, config, approach, feedback_context)

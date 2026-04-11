@@ -18,7 +18,7 @@ from leadops.db import connect, initialize_database
 from leadops.discovery import discover_track, discover_web
 from leadops.extract import extract_from_html
 from leadops.mailer import send_email_digest
-from leadops.models import DiscoveryBatch, DiscoveryCandidate
+from leadops.models import AssessmentResult, DiscoveryBatch, DiscoveryCandidate
 from leadops.query_plans import get_track
 from leadops.repository import Repository
 from leadops.schedule import LaunchdSpec, build_program_arguments, render_launchd_plist
@@ -58,6 +58,39 @@ class LeadOpsTests(unittest.TestCase):
             self.assertGreater(len(config.profile.preferred_signals), 0)
             self.assertGreater(len(config.profile.caution_signals), 0)
             self.assertGreater(len(config.profile.post_contact_checks), 0)
+
+    def test_list_candidate_targets_returns_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            repo = self._repo_for_workspace(workspace)
+
+            first_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Older Candidate",
+                url="https://older.example",
+                source="manual",
+                notes="Older product opportunity.",
+            )
+            second_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Newer Candidate",
+                url="https://newer.example",
+                source="manual",
+                notes="Newer product opportunity.",
+            )
+
+            repo.conn.execute(
+                "UPDATE targets SET created_at = ?, updated_at = ? WHERE id = ?",
+                ("2026-04-08T00:00:00Z", "2026-04-08T00:00:00Z", first_id),
+            )
+            repo.conn.execute(
+                "UPDATE targets SET created_at = ?, updated_at = ? WHERE id = ?",
+                ("2026-04-09T00:00:00Z", "2026-04-09T00:00:00Z", second_id),
+            )
+            repo.conn.commit()
+
+            targets = repo.list_candidate_targets()
+            self.assertEqual([target.name for target in targets[:2]], ["Newer Candidate", "Older Candidate"])
 
     def test_extract_from_html(self) -> None:
         page = extract_from_html(
@@ -132,6 +165,58 @@ class LeadOpsTests(unittest.TestCase):
             self.assertEqual(run_row["status"], "failed")
             self.assertEqual(int(packet_count_row["count"]), 0)
             self.assertEqual(int(review_item_count_row["count"]), 0)
+
+    def test_run_daily_assesses_bounded_newest_candidate_window(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+
+            for index in range(25):
+                target_id, _ = repo.add_or_update_target(
+                    kind="founder",
+                    name=f"Candidate {index:02d}",
+                    url=f"https://candidate-{index:02d}.example",
+                    source="manual",
+                    notes="Project-shaped launch-ready software work.",
+                )
+                timestamp = f"2026-04-{index + 1:02d}T00:00:00Z"
+                repo.conn.execute(
+                    "UPDATE targets SET created_at = ?, updated_at = ? WHERE id = ?",
+                    (timestamp, timestamp, target_id),
+                )
+            repo.conn.commit()
+
+            assessed_names: list[str] = []
+
+            def _assess(target, _config, _approach=None, _feedback_context=None):
+                assessed_names.append(target.name)
+                return AssessmentResult(
+                    confidence=0.9,
+                    profile_fit="high",
+                    activation_signal="explicit",
+                    evidence_confidence="strong",
+                    freshness="fresh",
+                    action_queue="pursue_now",
+                    summary_thesis=f"{target.name} looks promising.",
+                    fit_rationale="High fit for the configured profile.",
+                    activation_rationale="Public signals justify immediate outreach.",
+                    outreach_angle="Reach out now.",
+                    draft_subject=f"Build help for {target.name}",
+                    draft_body="Would love to talk.",
+                )
+
+            provider = MagicMock()
+            provider.name = "mock"
+            provider.assess.side_effect = _assess
+
+            with patch("leadops.daily._provider_for_config", return_value=provider):
+                result = run_daily(repo, config, "2026-04-15")
+
+            self.assertEqual(provider.assess.call_count, 20)
+            self.assertEqual(assessed_names[0], "Candidate 24")
+            self.assertEqual(assessed_names[-1], "Candidate 05")
+            self.assertEqual(result.surfaced_new, config.profile.daily_new_lead_cap)
 
     def test_run_daily_preserves_same_day_packet_versions(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
@@ -467,6 +552,30 @@ timeout_seconds = 30
                     raw_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE review_packets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    packet_date TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    markdown_path TEXT NOT NULL,
+                    json_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES daily_runs(id)
+                );
+                CREATE TABLE review_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    packet_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    assessment_id INTEGER NOT NULL,
+                    section TEXT NOT NULL,
+                    rank_index INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(packet_id) REFERENCES review_packets(id),
+                    FOREIGN KEY(target_id) REFERENCES targets(id),
+                    FOREIGN KEY(assessment_id) REFERENCES assessments(id)
+                );
                 INSERT INTO targets (
                     id, kind, name, normalized_name, source, dedupe_key, status, created_at, updated_at
                 ) VALUES (
@@ -475,6 +584,11 @@ timeout_seconds = 30
                 );
                 INSERT INTO daily_runs (id, run_date, started_at, status, notes)
                 VALUES (1, '2026-04-09', '2026-04-09T00:00:00Z', 'done', '');
+                INSERT INTO review_packets (
+                    id, run_id, packet_date, version, markdown_path, json_path, created_at
+                ) VALUES (
+                    1, 1, '2026-04-09', 1, '/tmp/packet.md', '/tmp/packet.json', '2026-04-09T00:00:00Z'
+                );
                 INSERT INTO assessments (
                     target_id, run_id, provider, fit_score, confidence, recommend,
                     profile_fit, activation_signal, evidence_confidence, freshness, action_queue,
@@ -488,6 +602,11 @@ timeout_seconds = 30
                     '["signal"]', '["risk"]', '["budget"]', '["risk"]', '["evidence"]',
                     '{}', '2026-04-09', '{"id":"legacy"}', '2026-04-09T00:00:00Z'
                 );
+                INSERT INTO review_items (
+                    id, packet_id, target_id, assessment_id, section, rank_index, score, confidence, created_at
+                ) VALUES (
+                    1, 1, 1, 1, 'pursue_now', 1, 88.0, 0.9, '2026-04-09T00:00:00Z'
+                );
                 """
             )
             conn.commit()
@@ -499,11 +618,16 @@ timeout_seconds = 30
             self.addCleanup(migrated.close)
             row = migrated.execute("SELECT * FROM assessments").fetchone()
             columns = [item["name"] for item in migrated.execute("PRAGMA table_info(assessments)").fetchall()]
+            review_item = migrated.execute("SELECT * FROM review_items").fetchone()
+            review_fk_tables = [item["table"] for item in migrated.execute("PRAGMA foreign_key_list(review_items)").fetchall()]
 
             self.assertNotIn("fit_score", columns)
             self.assertEqual(row["fit_rationale"], "Old fit rationale")
             self.assertEqual(row["activation_rationale"], "Old activation rationale")
             self.assertEqual(row["risk_tags_json"], '["risk"]')
+            self.assertEqual(review_item["assessment_id"], 1)
+            self.assertIn("assessments", review_fk_tables)
+            self.assertNotIn("assessments_legacy", review_fk_tables)
 
     def test_command_provider_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:

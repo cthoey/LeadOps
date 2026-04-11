@@ -35,6 +35,24 @@ CREATE TABLE IF NOT EXISTS assessments (
 """
 
 
+REVIEW_ITEMS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS review_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    packet_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    assessment_id INTEGER NOT NULL,
+    section TEXT NOT NULL,
+    rank_index INTEGER NOT NULL,
+    score REAL NOT NULL,
+    confidence REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(packet_id) REFERENCES review_packets(id),
+    FOREIGN KEY(target_id) REFERENCES targets(id),
+    FOREIGN KEY(assessment_id) REFERENCES assessments(id)
+);
+"""
+
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 
@@ -78,20 +96,7 @@ CREATE TABLE IF NOT EXISTS review_packets (
     FOREIGN KEY(run_id) REFERENCES daily_runs(id)
 );
 
-CREATE TABLE IF NOT EXISTS review_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    packet_id INTEGER NOT NULL,
-    target_id INTEGER NOT NULL,
-    assessment_id INTEGER NOT NULL,
-    section TEXT NOT NULL,
-    rank_index INTEGER NOT NULL,
-    score REAL NOT NULL,
-    confidence REAL NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(packet_id) REFERENCES review_packets(id),
-    FOREIGN KEY(target_id) REFERENCES targets(id),
-    FOREIGN KEY(assessment_id) REFERENCES assessments(id)
-);
+""" + REVIEW_ITEMS_TABLE_SQL + """
 
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -271,5 +276,45 @@ def _migrate_assessments_table(conn: sqlite3.Connection) -> None:
             ),
         )
 
+    _rebuild_review_items_assessment_fk(conn)
     conn.execute("DROP TABLE assessments_legacy")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_assessments_target_run ON assessments(target_id, run_id)")
+
+
+def _rebuild_review_items_assessment_fk(conn: sqlite3.Connection) -> None:
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_items'"
+    ).fetchone()
+    if not table_exists:
+        return
+
+    foreign_keys = conn.execute("PRAGMA foreign_key_list(review_items)").fetchall()
+    if not any(str(row["table"]) == "assessments_legacy" for row in foreign_keys):
+        return
+
+    conn.execute("ALTER TABLE review_items RENAME TO review_items_legacy")
+    conn.executescript(REVIEW_ITEMS_TABLE_SQL)
+
+    rows = conn.execute("SELECT * FROM review_items_legacy ORDER BY id ASC").fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO review_items (
+                id, packet_id, target_id, assessment_id, section,
+                rank_index, score, confidence, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(row["id"]),
+                int(row["packet_id"]),
+                int(row["target_id"]),
+                int(row["assessment_id"]),
+                str(row["section"]),
+                int(row["rank_index"]),
+                float(row["score"]),
+                float(row["confidence"]),
+                str(row["created_at"]),
+            ),
+        )
+
+    conn.execute("DROP TABLE review_items_legacy")
