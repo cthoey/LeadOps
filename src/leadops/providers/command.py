@@ -26,6 +26,11 @@ class CommandProvider:
             "profile": {
                 "name": config.profile.name,
                 "offer": config.profile.offer,
+                "ideal_customer": config.profile.ideal_customer,
+                "fit_definition": config.profile.fit_definition,
+                "preferred_signals": config.profile.preferred_signals,
+                "caution_signals": config.profile.caution_signals,
+                "post_contact_checks": config.profile.post_contact_checks,
                 "hard_rejects": config.profile.hard_rejects,
                 "daily_new_lead_cap": config.profile.daily_new_lead_cap,
             },

@@ -94,6 +94,35 @@ Review the outputs in:
 
 Those filenames always point at the latest packet for that date. If you rerun the same date more than once, LeadOps also keeps versioned snapshots alongside them, such as `daily-brief.v2.md`.
 
+## Business-Specific Profile Configuration
+
+The engine is generic, but the profile is where you teach LeadOps what a good opportunity looks like for one specific business.
+
+The current profile surface supports:
+
+- `offer`
+  - the simplest true market-facing description of the work
+- `ideal_customer`
+  - who should be on the other side of the deal
+- `fit_definition`
+  - the preferred work shape once you strip away marketing language
+- `preferred_signals`
+  - public signals that should raise fit
+- `caution_signals`
+  - public signals that should lower fit or trigger skepticism
+- `post_contact_checks`
+  - important truths that usually cannot be known before outreach
+- `hard_rejects`
+  - patterns the system should decline aggressively
+
+LeadOps passes these into discovery and assessment prompts so the generic core can stay small while the business logic lives in config.
+
+There is a concrete example profile at:
+
+- `examples/solo_product_builder.toml`
+
+Use that as a starting point if your business is close to “scope, build, launch, and hand off customer-facing software for founders and small product teams.”
+
 ## Common Commands
 
 ```bash

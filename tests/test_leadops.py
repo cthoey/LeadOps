@@ -47,6 +47,18 @@ class LeadOpsTests(unittest.TestCase):
     def test_dedupe_prefers_domain(self) -> None:
         self.assertEqual(dedupe_key("founder", "Example", "https://www.example.com/app"), "founder:example.com")
 
+    def test_initialize_workspace_loads_business_profile_fields(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+
+            self.assertIn("customer-facing software", config.profile.offer)
+            self.assertTrue(config.profile.ideal_customer)
+            self.assertTrue(config.profile.fit_definition)
+            self.assertGreater(len(config.profile.preferred_signals), 0)
+            self.assertGreater(len(config.profile.caution_signals), 0)
+            self.assertGreater(len(config.profile.post_contact_checks), 0)
+
     def test_extract_from_html(self) -> None:
         page = extract_from_html(
             """

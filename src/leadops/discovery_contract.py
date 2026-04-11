@@ -94,10 +94,33 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         "Business profile:",
         f"- Name: {profile.get('name', '')}",
         f"- Offer: {profile.get('offer', '')}",
-        "- Hard rejects:",
     ]
-    for item in profile.get("hard_rejects", []):
-        lines.append(f"  - {item}")
+    ideal_customer = str(profile.get("ideal_customer", "")).strip()
+    fit_definition = str(profile.get("fit_definition", "")).strip()
+    preferred_signals = [str(item).strip() for item in profile.get("preferred_signals", []) if str(item).strip()]
+    caution_signals = [str(item).strip() for item in profile.get("caution_signals", []) if str(item).strip()]
+    post_contact_checks = [str(item).strip() for item in profile.get("post_contact_checks", []) if str(item).strip()]
+    if ideal_customer:
+        lines.append(f"- Ideal customer: {ideal_customer}")
+    if fit_definition:
+        lines.append(f"- Fit definition: {fit_definition}")
+    if preferred_signals:
+        lines.append("- Preferred public-fit signals:")
+        for item in preferred_signals:
+            lines.append(f"  - {item}")
+    if caution_signals:
+        lines.append("- Caution signals:")
+        for item in caution_signals:
+            lines.append(f"  - {item}")
+    hard_rejects = [str(item).strip() for item in profile.get("hard_rejects", []) if str(item).strip()]
+    if hard_rejects:
+        lines.append("- Hard rejects:")
+        for item in hard_rejects:
+            lines.append(f"  - {item}")
+    if post_contact_checks:
+        lines.append("- Post-contact checks that are usually unknown before outreach:")
+        for item in post_contact_checks:
+            lines.append(f"  - {item}")
     if approach:
         lines.extend(
             [

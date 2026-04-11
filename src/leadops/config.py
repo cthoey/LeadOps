@@ -9,7 +9,33 @@ import tomllib
 DEFAULT_CONFIG = """\
 [profile]
 name = "Your Practice"
-offer = "Independent product engineer helping founders and very small teams turn real product ideas, roadmaps, and prototypes into launch-ready customer-facing web apps."
+offer = "Independent product engineer helping founders and small product teams turn ideas, roadmaps, and rough prototypes into real customer-facing software."
+ideal_customer = "Founders and small product teams with direct access to a real decision-maker and a real product initiative that needs one accountable builder."
+fit_definition = "Prefer project-shaped engagements where one external builder can help shape scope, make core technical decisions, build, launch, and hand off. Existing products are still a fit when there is a meaningful implementation transition, build gap, or ownership gap."
+preferred_signals = [
+  "direct decision-maker is visible",
+  "roadmap, prototype, or rough product needs implementation",
+  "project-shaped build or milestone language",
+  "design-to-build handoff or implementation transition",
+  "launch pressure or explicit push toward shipping",
+  "small team or no obvious internal engineering owner for this slice",
+  "existing product with a meaningful implementation or ownership gap"
+]
+caution_signals = [
+  "hiring or staff augmentation framing",
+  "fractional CTO or advisory-only ask",
+  "maintenance, rescue, or cleanup as the main work",
+  "mature engineering org or many existing stakeholders",
+  "strong inherited technical constraints with little scope-shaping room",
+  "vague thread with little public evidence"
+]
+post_contact_checks = [
+  "budget and commercial scope",
+  "real authority and decision path",
+  "sponsor quality and handoff owner",
+  "constraints around any existing prototype or production system",
+  "delivery viability and internal ability to absorb the work"
+]
 daily_new_lead_cap = 5
 daily_followup_cap = 5
 cooldown_days = 21
@@ -54,6 +80,11 @@ mode = "none"
 class ProfileConfig:
     name: str
     offer: str
+    ideal_customer: str
+    fit_definition: str
+    preferred_signals: list[str]
+    caution_signals: list[str]
+    post_contact_checks: list[str]
     hard_rejects: list[str]
     daily_new_lead_cap: int
     daily_followup_cap: int
@@ -125,6 +156,11 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     profile = ProfileConfig(
         name=str(profile_raw.get("name", "Your Practice")),
         offer=str(profile_raw.get("offer", "")).strip(),
+        ideal_customer=str(profile_raw.get("ideal_customer", "")).strip(),
+        fit_definition=str(profile_raw.get("fit_definition", "")).strip(),
+        preferred_signals=[str(item) for item in profile_raw.get("preferred_signals", [])],
+        caution_signals=[str(item) for item in profile_raw.get("caution_signals", [])],
+        post_contact_checks=[str(item) for item in profile_raw.get("post_contact_checks", [])],
         hard_rejects=[str(item) for item in profile_raw.get("hard_rejects", [])],
         daily_new_lead_cap=int(profile_raw.get("daily_new_lead_cap", 5)),
         daily_followup_cap=int(profile_raw.get("daily_followup_cap", 5)),
