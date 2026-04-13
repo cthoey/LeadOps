@@ -12,6 +12,7 @@ from leadops.util import dedupe_key, domain_from_url, normalize_name, utcnow
 TARGET_STATUSES = {
     "candidate",
     "approved",
+    "expired",
     "rejected",
     "sent",
     "replied",
@@ -80,6 +81,7 @@ class Repository:
         source: str,
         notes: str,
         raw_evidence: str = "",
+        reactivate_expired: bool = False,
     ) -> tuple[int, str]:
         if kind not in {"connector", "founder"}:
             raise ValueError("kind must be connector or founder")
@@ -89,17 +91,24 @@ class Repository:
         domain = domain_from_url(url)
         key = dedupe_key(kind, name, url)
         row = self.conn.execute(
-            "SELECT id, notes, raw_evidence FROM targets WHERE dedupe_key = ?",
+            "SELECT id, notes, raw_evidence, status, next_followup_at FROM targets WHERE dedupe_key = ?",
             (key,),
         ).fetchone()
         if row:
             merged_notes = "\n\n".join([item for item in [row["notes"], notes] if item]).strip()
             merged_evidence = "\n\n".join([item for item in [row["raw_evidence"], raw_evidence] if item]).strip()
+            next_status = str(row["status"] or "candidate")
+            next_followup_at = row["next_followup_at"]
+            action = "updated"
+            if reactivate_expired and next_status == "expired":
+                next_status = "candidate"
+                next_followup_at = None
+                action = "reactivated"
             self.conn.execute(
                 """
                 UPDATE targets
                 SET name = ?, normalized_name = ?, url = COALESCE(?, url), domain = ?, source = ?,
-                    notes = ?, raw_evidence = ?, updated_at = ?
+                    notes = ?, raw_evidence = ?, status = ?, next_followup_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -110,12 +119,14 @@ class Repository:
                     source,
                     merged_notes,
                     merged_evidence,
+                    next_status,
+                    next_followup_at,
                     now,
                     int(row["id"]),
                 ),
             )
             self.conn.commit()
-            return int(row["id"]), "updated"
+            return int(row["id"]), action
 
         cur = self.conn.execute(
             """

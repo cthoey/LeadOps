@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from typing import Any
+import re
 
 
 PROFILE_FIT_RANK = {
@@ -40,6 +43,25 @@ ACTION_QUEUE_ORDER = {
 
 VISIBLE_CANDIDATE_QUEUES = {"pursue_now", "watch", "nurture"}
 ACTIONABLE_QUEUES = {"pursue_now", "followup_due"}
+STALE_PUBLIC_SIGNAL_DAYS = 180
+STALE_PUBLIC_SIGNAL_RISK = "stale_primary_signal"
+STACKED_MISMATCH_RISK = "stacked_opportunity_mismatch"
+STACKED_MISMATCH_THRESHOLD = 2
+EXPLICIT_PUBLIC_SIGNAL_TAGS = frozenset(
+    {
+        "explicit_ask",
+        "explicit_freelance_ask",
+        "explicit_builder_ask",
+        "explicit_mvp_builder_ask",
+    }
+)
+OPPORTUNITY_MISMATCH_RISKS = frozenset(
+    {
+        "location_mismatch",
+        "tooling_mismatch",
+        "role_mismatch",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -139,6 +161,7 @@ class DiscoveryCandidate:
     activation_rationale: str
     evidence: list[str] = field(default_factory=list)
     source_urls: list[str] = field(default_factory=list)
+    contact_routes: list[str] = field(default_factory=list)
     signal_tags: list[str] = field(default_factory=list)
     risk_tags: list[str] = field(default_factory=list)
     source_date: str | None = None
@@ -161,6 +184,8 @@ class DiscoveryCandidate:
             sections.append("Evidence:\n" + "\n".join(f"- {item}" for item in self.evidence))
         if self.source_urls:
             sections.append("Sources:\n" + "\n".join(f"- {item}" for item in self.source_urls))
+        if self.contact_routes:
+            sections.append("Contact routes:\n" + "\n".join(f"- {item}" for item in self.contact_routes))
         if self.signal_tags:
             sections.append("Signals:\n" + "\n".join(f"- {item}" for item in self.signal_tags))
         if self.risk_tags:
@@ -220,6 +245,7 @@ def discovery_batch_from_dict(data: dict[str, Any]) -> DiscoveryBatch:
             activation_rationale=str(item.get("activation_rationale", "")).strip(),
             evidence=[str(entry).strip() for entry in item.get("evidence", []) if str(entry).strip()],
             source_urls=[str(entry).strip() for entry in item.get("source_urls", []) if str(entry).strip()],
+            contact_routes=[str(entry).strip() for entry in item.get("contact_routes", []) if str(entry).strip()],
             signal_tags=[str(entry).strip() for entry in item.get("signal_tags", []) if str(entry).strip()],
             risk_tags=[str(entry).strip() for entry in item.get("risk_tags", []) if str(entry).strip()],
             source_date=_normalize_source_date(item.get("source_date")),
@@ -267,3 +293,156 @@ def _coarse_priority_score(
     score += max(0.0, min(confidence, 1.0)) * 10
     score -= min(risk_count, 5) * 4
     return score
+
+
+def stale_public_signal_blocks_activation(
+    *,
+    activation_signal: str,
+    freshness: str,
+    source_date: str | None,
+    signal_tags: list[str],
+    risk_tags: list[str],
+) -> bool:
+    if activation_signal != "explicit":
+        return False
+    if freshness == "fresh":
+        return False
+    if not _source_date_is_stale_for_public_signal(source_date):
+        return False
+    if freshness == "dated":
+        return True
+    normalized_tags = {_normalize_tag(tag) for tag in [*signal_tags, *risk_tags]}
+    if "dated_signal" in normalized_tags:
+        return True
+    return bool(normalized_tags & EXPLICIT_PUBLIC_SIGNAL_TAGS)
+
+
+def stale_public_signal_reason(source_date: str | None) -> str:
+    if source_date:
+        return (
+            f"The clearest explicit public ask appears stale ({source_date}) and no newer confirming "
+            "implementation signal is visible, so this should not drive outreach now."
+        )
+    return (
+        "The clearest explicit public ask appears stale and no newer confirming implementation signal is visible, "
+        "so this should not drive outreach now."
+    )
+
+
+def apply_stale_public_signal_guard(assessment: AssessmentResult) -> bool:
+    if not stale_public_signal_blocks_activation(
+        activation_signal=assessment.activation_signal,
+        freshness=assessment.freshness,
+        source_date=assessment.source_date,
+        signal_tags=assessment.signal_tags,
+        risk_tags=assessment.risk_tags,
+    ):
+        return False
+
+    assessment.activation_signal = "weak"
+    assessment.action_queue = "decline"
+    assessment.outreach_angle = ""
+    assessment.draft_subject = ""
+    assessment.draft_body = ""
+    if STALE_PUBLIC_SIGNAL_RISK not in assessment.risk_tags:
+        assessment.risk_tags.append(STALE_PUBLIC_SIGNAL_RISK)
+    assessment.activation_rationale = stale_public_signal_reason(assessment.source_date)
+    return True
+
+
+def drop_stale_public_signal_candidate(candidate: DiscoveryCandidate) -> bool:
+    if not stale_public_signal_blocks_activation(
+        activation_signal=candidate.activation_signal,
+        freshness=candidate.freshness,
+        source_date=candidate.source_date,
+        signal_tags=candidate.signal_tags,
+        risk_tags=candidate.risk_tags,
+    ):
+        return False
+    if STALE_PUBLIC_SIGNAL_RISK not in candidate.risk_tags:
+        candidate.risk_tags.append(STALE_PUBLIC_SIGNAL_RISK)
+    return True
+
+
+def stacked_opportunity_mismatch_blocks_activation(*, risk_tags: list[str]) -> bool:
+    normalized_risks = {_normalize_tag(tag) for tag in risk_tags}
+    mismatch_count = len(normalized_risks & OPPORTUNITY_MISMATCH_RISKS)
+    return mismatch_count >= STACKED_MISMATCH_THRESHOLD
+
+
+def stacked_opportunity_mismatch_reason(risk_tags: list[str]) -> str:
+    normalized_risks = {_normalize_tag(tag) for tag in risk_tags}
+    reasons: list[str] = []
+    if "location_mismatch" in normalized_risks:
+        reasons.append("the public ask appears locally constrained")
+    if "tooling_mismatch" in normalized_risks:
+        reasons.append("the requested tooling sits outside the business lane")
+    if "role_mismatch" in normalized_risks:
+        reasons.append("the role itself is not the right fit")
+    if reasons:
+        return (
+            "The opportunity is mismatched for outreach because "
+            + ", ".join(reasons[:-1] + [f"and {reasons[-1]}" if len(reasons) > 1 else reasons[-1]])
+            + "."
+        )
+    return "The opportunity shows multiple public mismatch signals and should not be treated as an outreach lead."
+
+
+def apply_stacked_opportunity_mismatch_guard(assessment: AssessmentResult) -> bool:
+    if not stacked_opportunity_mismatch_blocks_activation(risk_tags=assessment.risk_tags):
+        return False
+
+    assessment.activation_signal = "weak"
+    assessment.action_queue = "decline"
+    assessment.outreach_angle = ""
+    assessment.draft_subject = ""
+    assessment.draft_body = ""
+    if STACKED_MISMATCH_RISK not in assessment.risk_tags:
+        assessment.risk_tags.append(STACKED_MISMATCH_RISK)
+    assessment.activation_rationale = stacked_opportunity_mismatch_reason(assessment.risk_tags)
+    return True
+
+
+def drop_stacked_opportunity_mismatch_candidate(candidate: DiscoveryCandidate) -> bool:
+    if not stacked_opportunity_mismatch_blocks_activation(risk_tags=candidate.risk_tags):
+        return False
+    if STACKED_MISMATCH_RISK not in candidate.risk_tags:
+        candidate.risk_tags.append(STACKED_MISMATCH_RISK)
+    return True
+
+
+def _source_date_is_stale_for_public_signal(source_date: str | None, *, today: date | None = None) -> bool:
+    if not source_date:
+        return False
+    today = today or date.today()
+    parsed = _parse_source_date_latest(source_date)
+    if parsed is not None:
+        return (today - parsed).days > STALE_PUBLIC_SIGNAL_DAYS
+
+    year_match = re.fullmatch(r"(\d{4})", source_date.strip())
+    if year_match:
+        return int(year_match.group(1)) < today.year
+    return False
+
+
+def _parse_source_date_latest(source_date: str) -> date | None:
+    text = source_date.strip()
+    exact_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if exact_match:
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            return None
+
+    month_match = re.fullmatch(r"(\d{4})-(\d{2})", text)
+    if month_match:
+        year = int(month_match.group(1))
+        month = int(month_match.group(2))
+        if month < 1 or month > 12:
+            return None
+        return date(year, month, monthrange(year, month)[1])
+    return None
+
+
+def _normalize_tag(tag: str) -> str:
+    return tag.strip().lower().replace("-", "_").replace(" ", "_")

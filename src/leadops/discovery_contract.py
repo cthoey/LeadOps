@@ -25,6 +25,7 @@ DISCOVERY_SCHEMA: dict[str, Any] = {
                     "activation_rationale": {"type": "string"},
                     "evidence": {"type": "array", "items": {"type": "string"}},
                     "source_urls": {"type": "array", "items": {"type": "string"}},
+                    "contact_routes": {"type": "array", "items": {"type": "string"}},
                     "signal_tags": {"type": "array", "items": {"type": "string"}},
                     "risk_tags": {"type": "array", "items": {"type": "string"}},
                     "source_date": {"type": ["string", "null"]},
@@ -42,6 +43,7 @@ DISCOVERY_SCHEMA: dict[str, Any] = {
                     "activation_rationale",
                     "evidence",
                     "source_urls",
+                    "contact_routes",
                     "signal_tags",
                     "risk_tags",
                     "source_date",
@@ -70,12 +72,14 @@ Use web search to gather current public evidence.
 Only return candidates with enough public evidence to justify follow-up.
 Do not invent facts.
 Do not hallucinate source URLs.
+Do not infer or fabricate private contact information.
 If evidence is weak or the work shape is unclear, exclude the candidate.
 
 Keep these distinctions separate:
 - observed public evidence
 - inferred implications from that evidence
 - risk or disqualifier signals
+- public professional contact routes
 
 Use the retrieval approach only as context for why this search is being run. Do not let it redefine the core truth model.
 
@@ -95,11 +99,17 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         f"- Name: {profile.get('name', '')}",
         f"- Offer: {profile.get('offer', '')}",
     ]
+    base_location = str(profile.get("base_location", "")).strip()
+    service_geography = str(profile.get("service_geography", "")).strip()
     ideal_customer = str(profile.get("ideal_customer", "")).strip()
     fit_definition = str(profile.get("fit_definition", "")).strip()
     preferred_signals = [str(item).strip() for item in profile.get("preferred_signals", []) if str(item).strip()]
     caution_signals = [str(item).strip() for item in profile.get("caution_signals", []) if str(item).strip()]
     post_contact_checks = [str(item).strip() for item in profile.get("post_contact_checks", []) if str(item).strip()]
+    if base_location:
+        lines.append(f"- Base location: {base_location}")
+    if service_geography:
+        lines.append(f"- Service geography: {service_geography}")
     if ideal_customer:
         lines.append(f"- Ideal customer: {ideal_customer}")
     if fit_definition:
@@ -171,7 +181,18 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "- Prefer official company/founder pages when possible.",
             "- Only include candidates you would genuinely want in a tiny daily review packet.",
             "- Keep evidence concise, source-backed, and limited to observed public facts.",
+            "- Include `contact_routes` only for public professional contact paths such as a founder LinkedIn, company contact page, public work email, founder/team page, or public marketplace profile.",
+            "- Leave `contact_routes` empty when no clean public route is visible.",
+            "- Never guess private email addresses or personal contact details.",
             "- Set `profile_fit`, `activation_signal`, `evidence_confidence`, and `freshness` using only coarse bands.",
+            "- Old explicit public asks can support structural fit, but they do not by themselves prove a current outreach reason.",
+            "- Do not return a candidate when the clearest explicit builder ask is older than about 180 days and there is no newer confirming implementation signal.",
+            "- A company merely being based in a city is not a location mismatch by itself.",
+            "- Use the business profile's base location and service geography when deciding whether a location constraint is a real mismatch.",
+            "- Use `location_mismatch` only when public evidence explicitly requires or strongly prefers local geography and no remote acceptance is visible.",
+            "- Use `tooling_mismatch` when the ask is explicitly for no-code/low-code tooling or another stack outside the business lane.",
+            "- Use `role_mismatch` when the ask is for a materially different role such as a no-code builder rather than the business's product-engineering lane.",
+            "- Do not return a candidate when two or more of `location_mismatch`, `tooling_mismatch`, and `role_mismatch` apply.",
             "- Use `summary_thesis` for the one-sentence case for surfacing the target.",
             "- Use `fit_rationale` for the main fit inference.",
             "- Use `activation_rationale` for why this seems timely or not timely from public evidence.",

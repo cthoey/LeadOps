@@ -318,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"JSON brief: {result.packet_json}")
         print(f"Digest text: {result.digest_text}")
         print(f"Digest HTML: {result.digest_html}")
+        print(f"Current review markdown: {result.current_review_markdown}")
+        print(f"Current review JSON: {result.current_review_json}")
+        print(f"Current review text: {result.current_review_text}")
+        print(f"Current review HTML: {result.current_review_html}")
         print(f"Digest sent: {'yes' if result.digest_sent else 'no'}")
         return 0
 
@@ -505,7 +509,7 @@ def _brief_item_from_payload(item: dict[str, object], section: str) -> BriefItem
         url=str(target_payload.get("url", "") or ""),
         source=str(target_payload.get("source", "")),
         notes=str(target_payload.get("notes", "")),
-        raw_evidence="",
+        raw_evidence=str(target_payload.get("raw_evidence", "")),
         status=str(target_payload.get("status", "")),
         domain="",
         dedupe_key="",

@@ -10,6 +10,8 @@ DEFAULT_CONFIG = """\
 [profile]
 name = "Your Practice"
 offer = "Independent product engineer helping founders and small product teams turn ideas, roadmaps, and rough prototypes into real customer-facing software."
+base_location = "New Hampshire, USA"
+service_geography = "Remote-first across the United States; East Coast overlap preferred; Boston-area onsite possible by arrangement."
 ideal_customer = "Founders and small product teams with direct access to a real decision-maker and a real product initiative that needs one accountable builder."
 fit_definition = "Prefer project-shaped engagements where one external builder can help shape scope, make core technical decisions, build, launch, and hand off. Existing products are still a fit when there is a meaningful implementation transition, build gap, or ownership gap."
 preferred_signals = [
@@ -80,6 +82,8 @@ mode = "none"
 class ProfileConfig:
     name: str
     offer: str
+    base_location: str
+    service_geography: str
     ideal_customer: str
     fit_definition: str
     preferred_signals: list[str]
@@ -134,6 +138,10 @@ class WorkspaceConfig:
     def outbox_dir(self) -> Path:
         return self.root / "outbox"
 
+    @property
+    def review_dir(self) -> Path:
+        return self.root / "review"
+
 
 def config_path(workspace: Path) -> Path:
     return workspace / "leadops.toml"
@@ -156,6 +164,8 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
     profile = ProfileConfig(
         name=str(profile_raw.get("name", "Your Practice")),
         offer=str(profile_raw.get("offer", "")).strip(),
+        base_location=str(profile_raw.get("base_location", "")).strip(),
+        service_geography=str(profile_raw.get("service_geography", "")).strip(),
         ideal_customer=str(profile_raw.get("ideal_customer", "")).strip(),
         fit_definition=str(profile_raw.get("fit_definition", "")).strip(),
         preferred_signals=[str(item) for item in profile_raw.get("preferred_signals", [])],
@@ -194,7 +204,7 @@ def load_workspace_config(workspace: Path) -> WorkspaceConfig:
 def initialize_workspace(workspace: Path) -> Path:
     workspace = workspace.expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
-    for relative in ("var", "outbox", "inbox", "cache"):
+    for relative in ("var", "outbox", "inbox", "cache", "review"):
         (workspace / relative).mkdir(parents=True, exist_ok=True)
     path = config_path(workspace)
     if not path.exists():

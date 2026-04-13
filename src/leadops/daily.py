@@ -16,6 +16,8 @@ from leadops.models import (
     PROFILE_FIT_RANK,
     VISIBLE_CANDIDATE_QUEUES,
     AssessmentResult,
+    apply_stacked_opportunity_mismatch_guard,
+    apply_stale_public_signal_guard,
 )
 from leadops.providers import CommandProvider, MockProvider
 from leadops.repository import Repository, TargetRecord
@@ -30,6 +32,10 @@ class DailyRunResult:
     packet_json: Path
     digest_text: Path
     digest_html: Path
+    current_review_markdown: Path
+    current_review_json: Path
+    current_review_text: Path
+    current_review_html: Path
     surfaced_new: int
     surfaced_followups: int
     packet_id: int
@@ -78,6 +84,7 @@ def run_daily(
         packet_version = repo.next_packet_version(packet_date)
         markdown_path, json_path, digest_path, digest_html_path = write_packet(
             packet_dir,
+            config.review_dir,
             packet_date,
             candidate_items,
             followup_items,
@@ -121,6 +128,10 @@ def run_daily(
             packet_json=json_path,
             digest_text=digest_path,
             digest_html=digest_html_path,
+            current_review_markdown=config.review_dir / "current-review.md",
+            current_review_json=config.review_dir / "current-review.json",
+            current_review_text=config.review_dir / "current-review.txt",
+            current_review_html=config.review_dir / "current-review.html",
             surfaced_new=len(candidate_items),
             surfaced_followups=len(followup_items),
             packet_id=packet_id,
@@ -150,6 +161,8 @@ def _assess_candidates(
         if target.last_packeted_at and target.last_packeted_at > cooldown_cutoff:
             continue
         assessment = provider.assess(target, config, approach, feedback_context)
+        apply_stale_public_signal_guard(assessment)
+        apply_stacked_opportunity_mismatch_guard(assessment)
         if assessment.action_queue not in VISIBLE_CANDIDATE_QUEUES:
             repo.save_assessment(run_id, target.id, provider.name, assessment)
             continue

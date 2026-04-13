@@ -35,10 +35,11 @@ def render_markdown(
     followup_items: list[BriefItem],
     *,
     approach: ApproachSpec | None = None,
+    brief_label: str = "LeadOps Daily Brief",
 ) -> str:
     grouped = _group_items_by_section(new_items)
     lines = [
-        f"# LeadOps Daily Brief - {packet_date}",
+        f"# {brief_label} - {packet_date}",
         "",
         f"- Pursue now: {len(grouped.get('pursue_now', []))}",
         f"- Watch: {len(grouped.get('watch', []))}",
@@ -53,8 +54,14 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_email_subject(packet_date: str, new_items: list[BriefItem], followup_items: list[BriefItem]) -> str:
-    return f"LeadOps Daily Brief - {packet_date} ({len(new_items)} queued, {len(followup_items)} follow-ups)"
+def render_email_subject(
+    packet_date: str,
+    new_items: list[BriefItem],
+    followup_items: list[BriefItem],
+    *,
+    brief_label: str = "LeadOps Daily Brief",
+) -> str:
+    return f"{brief_label} - {packet_date} ({len(new_items)} queued, {len(followup_items)} follow-ups)"
 
 
 def render_email_text(
@@ -63,10 +70,11 @@ def render_email_text(
     followup_items: list[BriefItem],
     *,
     approach: ApproachSpec | None = None,
+    brief_label: str = "LeadOps Daily Brief",
 ) -> str:
     grouped = _group_items_by_section(new_items)
     lines = [
-        f"LeadOps Daily Brief - {packet_date}",
+        f"{brief_label} - {packet_date}",
         "",
         f"Pursue now: {len(grouped.get('pursue_now', []))}",
         f"Watch: {len(grouped.get('watch', []))}",
@@ -87,11 +95,13 @@ def render_email_html(
     followup_items: list[BriefItem],
     *,
     approach: ApproachSpec | None = None,
+    brief_label: str = "LeadOps Daily Brief",
+    summary_label: str = "Daily Brief",
 ) -> str:
     grouped = _group_items_by_section(new_items)
     summary = (
         f'<div class="summary-card">'
-        f'<div class="summary-label">Daily Brief</div>'
+        f'<div class="summary-label">{escape(summary_label)}</div>'
         f'<div class="summary-date">{escape(packet_date)}</div>'
         f'<div class="summary-stats">'
         f'<span class="pill"><strong>{len(grouped.get("pursue_now", []))}</strong> pursue</span>'
@@ -124,7 +134,7 @@ def render_email_html(
             "<head>",
             '<meta charset="utf-8" />',
             '<meta name="viewport" content="width=device-width, initial-scale=1" />',
-            f"<title>{escape(render_email_subject(packet_date, new_items, followup_items))}</title>",
+            f"<title>{escape(render_email_subject(packet_date, new_items, followup_items, brief_label=brief_label))}</title>",
             "<style>",
             "body { margin: 0; padding: 0; background: #f5f7fb; color: #162030; font: 15px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }",
             ".wrap { max-width: 820px; margin: 0 auto; padding: 24px 16px 40px; }",
@@ -171,6 +181,7 @@ def render_email_html(
 
 def write_packet(
     packet_dir: Path,
+    review_dir: Path,
     packet_date: str,
     new_items: list[BriefItem],
     followup_items: list[BriefItem],
@@ -187,24 +198,44 @@ def write_packet(
     latest_json_path = packet_dir / "daily-brief.json"
     latest_digest_path = packet_dir / "daily-digest.txt"
     latest_digest_html_path = packet_dir / "daily-digest.html"
+    current_review_markdown_path = review_dir / "current-review.md"
+    current_review_json_path = review_dir / "current-review.json"
+    current_review_text_path = review_dir / "current-review.txt"
+    current_review_html_path = review_dir / "current-review.html"
 
     markdown = render_markdown(packet_date, new_items, followup_items, approach=approach)
     digest_text = render_email_text(packet_date, new_items, followup_items, approach=approach)
     digest_html = render_email_html(packet_date, new_items, followup_items, approach=approach)
-    grouped = _group_items_by_section(new_items)
-    payload = {
-        "packet_date": packet_date,
+    payload = _payload_for_items(packet_date, new_items, followup_items, approach=approach, version=version)
+    current_review_payload = {
+        **payload,
         "run_context": {
-            "approach": approach.as_payload() if approach else None,
-            "packet_version": version,
-        },
-        "queues": {
-            "pursue_now": [_item_to_dict(item) for item in grouped.get("pursue_now", [])],
-            "watch": [_item_to_dict(item) for item in grouped.get("watch", [])],
-            "nurture": [_item_to_dict(item) for item in grouped.get("nurture", [])],
-            "followup_due": [_item_to_dict(item) for item in followup_items],
+            **dict(payload.get("run_context", {})),
+            "view": "current_review",
         },
     }
+    current_review_markdown = render_markdown(
+        packet_date,
+        new_items,
+        followup_items,
+        approach=approach,
+        brief_label="LeadOps Current Review",
+    )
+    current_review_text = render_email_text(
+        packet_date,
+        new_items,
+        followup_items,
+        approach=approach,
+        brief_label="LeadOps Current Review",
+    )
+    current_review_html = render_email_html(
+        packet_date,
+        new_items,
+        followup_items,
+        approach=approach,
+        brief_label="LeadOps Current Review",
+        summary_label="Current Review",
+    )
 
     write_text(markdown_path, markdown)
     write_text(json_path, json.dumps(payload, indent=2) + "\n")
@@ -214,7 +245,36 @@ def write_packet(
     write_text(latest_json_path, json.dumps(payload, indent=2) + "\n")
     write_text(latest_digest_path, digest_text)
     write_text(latest_digest_html_path, digest_html)
+    write_text(current_review_markdown_path, current_review_markdown)
+    write_text(current_review_json_path, json.dumps(current_review_payload, indent=2) + "\n")
+    write_text(current_review_text_path, current_review_text)
+    write_text(current_review_html_path, current_review_html)
     return markdown_path, json_path, digest_path, digest_html_path
+
+
+def _payload_for_items(
+    packet_date: str,
+    new_items: list[BriefItem],
+    followup_items: list[BriefItem],
+    *,
+    approach: ApproachSpec | None,
+    version: int,
+) -> dict[str, object]:
+    grouped = _group_items_by_section(new_items)
+    return {
+        "packet_date": packet_date,
+        "run_context": {
+            "approach": approach.as_payload() if approach else None,
+            "packet_version": version,
+            "view": "daily_packet",
+        },
+        "queues": {
+            "pursue_now": [_item_to_dict(item) for item in grouped.get("pursue_now", [])],
+            "watch": [_item_to_dict(item) for item in grouped.get("watch", [])],
+            "nurture": [_item_to_dict(item) for item in grouped.get("nurture", [])],
+            "followup_due": [_item_to_dict(item) for item in followup_items],
+        },
+    }
 
 
 def _render_markdown_context(approach: ApproachSpec | None) -> list[str]:
@@ -269,6 +329,18 @@ def _render_markdown_section(title: str, items: list[BriefItem]) -> list[str]:
             lines.extend(["", "Evidence:", ""])
             for evidence in assessment.evidence:
                 lines.append(f"- {evidence}")
+        source_urls = _source_urls_for_target(target)
+        if source_urls:
+            lines.extend(["", "Source links:", ""])
+            for source_url in source_urls:
+                lines.append(f"- {source_url}")
+        contact_routes = _contact_routes_for_target(target)
+        lines.extend(["", "Contact routes:", ""])
+        if contact_routes:
+            for contact_route in contact_routes:
+                lines.append(f"- {contact_route}")
+        else:
+            lines.append("- None noted.")
         if assessment.unknowns_to_verify:
             lines.extend(["", "Unknowns to verify:", ""])
             for unknown in assessment.unknowns_to_verify:
@@ -308,6 +380,7 @@ def _item_to_dict(item: BriefItem) -> dict[str, object]:
             "source": item.target.source,
             "status": item.target.status,
             "notes": item.target.notes,
+            "raw_evidence": item.target.raw_evidence,
             "next_followup_at": item.target.next_followup_at,
         },
         "assessment": item.assessment.as_dict(),
@@ -334,6 +407,14 @@ def _render_email_text_section(title: str, items: list[BriefItem]) -> list[str]:
                 f"   Activation rationale: {assessment.activation_rationale}",
             ]
         )
+        source_urls = _source_urls_for_target(target)
+        if source_urls:
+            lines.append(f"   Source links: {', '.join(source_urls)}")
+        contact_routes = _contact_routes_for_target(target)
+        if contact_routes:
+            lines.append(f"   Contact routes: {', '.join(contact_routes)}")
+        else:
+            lines.append("   Contact routes: None noted.")
         if assessment.risk_tags:
             lines.append(f"   Risk tags: {', '.join(assessment.risk_tags)}")
         if assessment.unknowns_to_verify:
@@ -410,6 +491,10 @@ def _render_email_html_item(item: BriefItem) -> str:
         ]
     )
     evidence = _render_html_list(assessment.evidence)
+    source_urls = _source_urls_for_target(target)
+    source_links = _render_html_link_list(source_urls)
+    contact_routes = _contact_routes_for_target(target)
+    contact_links = _render_html_contact_list(contact_routes)
     risks = _render_html_list(assessment.risk_tags)
     unknowns = _render_html_list(assessment.unknowns_to_verify)
     signals = _render_html_list(assessment.signal_tags)
@@ -443,6 +528,8 @@ def _render_email_html_item(item: BriefItem) -> str:
         f'<div class="block"><span class="block-label">Signal tags</span>{signals}</div>'
         f'<div class="block"><span class="block-label">Risk tags</span>{risks}</div>'
         f'<div class="block"><span class="block-label">Public evidence</span>{evidence}</div>'
+        f'<div class="block"><span class="block-label">Source links</span>{source_links}</div>'
+        f'<div class="block"><span class="block-label">Contact routes</span>{contact_links}</div>'
         f'<div class="block"><span class="block-label">Unknowns to verify</span>{unknowns}</div>'
         f"{source_date_html}"
         f"{outreach_blocks}"
@@ -455,6 +542,80 @@ def _render_html_list(items: list[str]) -> str:
     if not items:
         return '<div class="meta">None noted.</div>'
     return '<ul class="list">' + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>"
+
+
+def _render_html_link_list(items: list[str]) -> str:
+    if not items:
+        return '<div class="meta">None noted.</div>'
+    return (
+        '<ul class="list">'
+        + "".join(
+            f'<li><a href="{escape(item)}">{escape(item)}</a></li>'
+            for item in items
+        )
+        + "</ul>"
+    )
+
+
+def _source_urls_for_target(target: TargetRecord) -> list[str]:
+    return _extract_section_urls(target.raw_evidence, "Sources")
+
+
+def _contact_routes_for_target(target: TargetRecord) -> list[str]:
+    return _extract_section_items(target.raw_evidence, "Contact routes")
+
+
+def _extract_section_urls(text: str, heading: str) -> list[str]:
+    urls: list[str] = []
+    for item in _extract_section_items(text, heading):
+        if item.startswith(("http://", "https://")) and item not in urls:
+            urls.append(item)
+    return urls
+
+
+def _extract_section_items(text: str, heading: str) -> list[str]:
+    items: list[str] = []
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if in_section:
+                break
+            continue
+        if line == f"{heading}:":
+            in_section = True
+            continue
+        if in_section and not line.startswith("- "):
+            break
+        if in_section:
+            value = line[2:].strip()
+            if value and value not in items:
+                items.append(value)
+    return items
+
+
+def _render_html_contact_list(items: list[str]) -> str:
+    if not items:
+        return '<div class="meta">None noted.</div>'
+    return '<ul class="list">' + "".join(f"<li>{_render_contact_route(item)}</li>" for item in items) + "</ul>"
+
+
+def _render_contact_route(item: str) -> str:
+    label, value = _split_contact_route(item)
+    if value.startswith(("http://", "https://")):
+        return f'<a href="{escape(value)}">{escape(label or value)}</a>'
+    if "@" in value and " " not in value:
+        return f'<a href="mailto:{escape(value)}">{escape(label or value)}</a>'
+    if label and value != label:
+        return f"{escape(label)}: {escape(value)}"
+    return escape(item)
+
+
+def _split_contact_route(item: str) -> tuple[str, str]:
+    if ": " not in item:
+        return item, item
+    label, value = item.split(": ", 1)
+    return label.strip(), value.strip()
 
 
 def _group_items_by_section(items: list[BriefItem]) -> dict[str, list[BriefItem]]:

@@ -53,6 +53,8 @@ class LeadOpsTests(unittest.TestCase):
             config = load_workspace_config(workspace)
 
             self.assertIn("customer-facing software", config.profile.offer)
+            self.assertEqual(config.profile.base_location, "New Hampshire, USA")
+            self.assertIn("United States", config.profile.service_geography)
             self.assertTrue(config.profile.ideal_customer)
             self.assertTrue(config.profile.fit_definition)
             self.assertGreater(len(config.profile.preferred_signals), 0)
@@ -125,6 +127,16 @@ class LeadOpsTests(unittest.TestCase):
                 url="https://example.com",
                 source="manual",
                 notes="Founder-led startup with roadmap, prototype, no engineering team, and early launch needs.",
+                raw_evidence=(
+                    "Evidence:\n"
+                    "- Example startup has a live product page.\n\n"
+                    "Sources:\n"
+                    "- https://example.com\n"
+                    "- https://example.com/jobs\n"
+                    "\nContact routes:\n"
+                    "- Founder LinkedIn: https://linkedin.com/in/example-founder\n"
+                    "- hello@example.com\n"
+                ),
             )
 
             result = run_daily(repo, config, "2026-04-08")
@@ -132,13 +144,33 @@ class LeadOpsTests(unittest.TestCase):
             self.assertTrue(result.packet_json.exists())
             self.assertTrue(result.digest_text.exists())
             self.assertTrue(result.digest_html.exists())
+            self.assertTrue(result.current_review_markdown.exists())
+            self.assertTrue(result.current_review_json.exists())
+            self.assertTrue(result.current_review_text.exists())
+            self.assertTrue(result.current_review_html.exists())
             self.assertGreaterEqual(result.surfaced_new, 1)
             digest_body = result.digest_text.read_text(encoding="utf-8")
             digest_html = result.digest_html.read_text(encoding="utf-8")
+            packet_json = result.packet_json.read_text(encoding="utf-8")
+            current_review_body = result.current_review_text.read_text(encoding="utf-8")
+            current_review_html = result.current_review_html.read_text(encoding="utf-8")
+            current_review_json = result.current_review_json.read_text(encoding="utf-8")
             self.assertIn("LeadOps Daily Brief - 2026-04-08", digest_body)
+            self.assertIn("LeadOps Current Review - 2026-04-08", current_review_body)
             self.assertIn("<!doctype html>", digest_html)
             self.assertIn("summary-card", digest_html)
             self.assertIn("Example Startup", digest_html)
+            self.assertIn("Current Review", current_review_html)
+            self.assertIn('"view": "current_review"', current_review_json)
+            self.assertIn("Source links", digest_body)
+            self.assertIn("https://example.com/jobs", digest_body)
+            self.assertIn("Contact routes", digest_body)
+            self.assertIn("linkedin.com/in/example-founder", digest_body)
+            self.assertIn('href="https://example.com/jobs"', digest_html)
+            self.assertIn('href="https://linkedin.com/in/example-founder"', digest_html)
+            self.assertIn('href="mailto:hello@example.com"', digest_html)
+            self.assertIn('"raw_evidence":', packet_json)
+            self.assertIn("https://example.com/jobs", packet_json)
 
     def test_run_daily_send_digest_failure_does_not_advance_packet_state(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
@@ -254,8 +286,126 @@ class LeadOpsTests(unittest.TestCase):
             self.assertIn("Second Same Day Startup", Path(packet_rows[1]["json_path"]).read_text(encoding="utf-8"))
 
             latest_payload = json.loads((workspace / "outbox" / "2026-04-10" / "daily-brief.json").read_text(encoding="utf-8"))
+            current_review_payload = json.loads((workspace / "review" / "current-review.json").read_text(encoding="utf-8"))
             self.assertEqual(latest_payload["run_context"]["packet_version"], 2)
             self.assertIn("Second Same Day Startup", json.dumps(latest_payload))
+            self.assertEqual(current_review_payload["run_context"]["packet_version"], 2)
+            self.assertEqual(current_review_payload["run_context"]["view"], "current_review")
+            self.assertIn("Second Same Day Startup", json.dumps(current_review_payload))
+
+    def test_run_daily_blocks_stale_explicit_public_signal_from_review(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="founder",
+                name="Old LinkedIn Ask Startup",
+                url="https://old-ask.example",
+                source="manual",
+                notes="Founder-led product with an old developer request.",
+                raw_evidence=(
+                    "Sources:\n"
+                    "- https://www.linkedin.com/posts/example-old-ask\n\n"
+                    "Signals:\n"
+                    "- explicit_freelance_ask\n\n"
+                    "Risks:\n"
+                    "- dated_signal\n\n"
+                    "Source date:\n"
+                    "- 2024\n"
+                ),
+            )
+
+            class _Provider:
+                name = "test-provider"
+
+                def assess(self, *_args, **_kwargs):
+                    return AssessmentResult(
+                        confidence=0.86,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="dated",
+                        action_queue="pursue_now",
+                        summary_thesis="Strong structural fit, but based on an old founder ask.",
+                        fit_rationale="The company shape still fits the business.",
+                        activation_rationale="The founder publicly asked for a freelance builder in 2024.",
+                        signal_tags=["explicit_freelance_ask", "founder_visible"],
+                        risk_tags=["dated_signal"],
+                        source_date="2024",
+                        outreach_angle="Would normally be outreach-ready.",
+                        draft_subject="Possible fit",
+                        draft_body="Draft body",
+                    )
+
+            with patch("leadops.daily._provider_for_config", return_value=_Provider()):
+                result = run_daily(repo, config, "2026-04-11")
+
+            self.assertEqual(result.surfaced_new, 0)
+            payload = json.loads((workspace / "outbox" / "2026-04-11" / "daily-brief.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(self._candidate_queue_items(payload)), 0)
+            assessment_row = repo.conn.execute(
+                "SELECT action_queue, activation_signal, risk_tags_json, activation_rationale FROM assessments ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(assessment_row["action_queue"], "decline")
+            self.assertEqual(assessment_row["activation_signal"], "weak")
+            self.assertIn("stale_primary_signal", assessment_row["risk_tags_json"])
+            self.assertIn("stale", assessment_row["activation_rationale"].lower())
+
+    def test_run_daily_blocks_stacked_location_tooling_role_mismatch_from_review(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            repo.add_or_update_target(
+                kind="founder",
+                name="No-Code Local Sprint Startup",
+                url="https://nocode-local.example",
+                source="manual",
+                notes="Founder post asks for a local no-code builder for a short MVP sprint.",
+                raw_evidence=(
+                    "Sources:\n"
+                    "- https://example.com/local-nocode-post\n\n"
+                    "Risks:\n"
+                    "- location_mismatch\n"
+                    "- tooling_mismatch\n"
+                    "- role_mismatch\n"
+                ),
+            )
+
+            class _Provider:
+                name = "test-provider"
+
+                def assess(self, *_args, **_kwargs):
+                    return AssessmentResult(
+                        confidence=0.91,
+                        profile_fit="medium",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        action_queue="pursue_now",
+                        summary_thesis="Looks active, but the ask is for the wrong local no-code role.",
+                        fit_rationale="The underlying company is startup-shaped.",
+                        activation_rationale="The founder posted a fresh ask for a local no-code builder.",
+                        risk_tags=["location_mismatch", "tooling_mismatch", "role_mismatch"],
+                        outreach_angle="Would normally be outreach-ready.",
+                        draft_subject="Possible fit",
+                        draft_body="Draft body",
+                    )
+
+            with patch("leadops.daily._provider_for_config", return_value=_Provider()):
+                result = run_daily(repo, config, "2026-04-11")
+
+            self.assertEqual(result.surfaced_new, 0)
+            payload = json.loads((workspace / "outbox" / "2026-04-11" / "daily-brief.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(self._candidate_queue_items(payload)), 0)
+            assessment_row = repo.conn.execute(
+                "SELECT action_queue, activation_signal, risk_tags_json, activation_rationale FROM assessments ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(assessment_row["action_queue"], "decline")
+            self.assertEqual(assessment_row["activation_signal"], "weak")
+            self.assertIn("stacked_opportunity_mismatch", assessment_row["risk_tags_json"])
+            self.assertIn("mismatch", assessment_row["activation_rationale"].lower())
 
     def test_send_email_digest_uses_smtp(self) -> None:
         email_config = EmailConfig(
@@ -713,6 +863,8 @@ timeout_seconds = 30
             self.assertEqual(len(targets), 1)
             self.assertEqual(targets[0].name, "Proto Foundry")
             self.assertIn("Sources:", targets[0].raw_evidence)
+            self.assertIn("Contact routes:", targets[0].raw_evidence)
+            self.assertIn("linkedin.example/protofoundry-founder", targets[0].raw_evidence)
 
             conn = connect(config.database_path)
             self.addCleanup(conn.close)
@@ -838,6 +990,390 @@ timeout_seconds = 30
             self.assertEqual(len(repo.list_targets()), 1)
             query_row = repo.conn.execute("SELECT notes FROM query_runs ORDER BY id DESC LIMIT 1").fetchone()
             self.assertIn("truncated=true", str(query_row["notes"]))
+
+    def test_discover_web_filters_stale_explicit_public_signal_candidates(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Old LinkedIn Ask Startup",
+                        url="https://old-ask.example",
+                        confidence=0.9,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="dated",
+                        summary_thesis="Looks structurally strong but the ask is old.",
+                        fit_rationale="Founder-led product work.",
+                        activation_rationale="LinkedIn ask from 2024.",
+                        signal_tags=["explicit_freelance_ask"],
+                        risk_tags=["dated_signal"],
+                        source_date="2024",
+                    ),
+                    DiscoveryCandidate(
+                        name="Fresh Builder Need Startup",
+                        url="https://fresh-ask.example",
+                        confidence=0.88,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Fresh founder ask with clear build gap.",
+                        fit_rationale="Founder-led product work.",
+                        activation_rationale="Current public builder ask.",
+                        signal_tags=["explicit_freelance_ask"],
+                        source_date="2026-04-01",
+                    ),
+                ],
+                raw_response={"id": "fake-stale-filter"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder prototype launch-ready web app",
+                    kind="founder",
+                    limit=2,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.total_candidates, 1)
+            targets = repo.list_targets()
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].name, "Fresh Builder Need Startup")
+            query_row = repo.conn.execute("SELECT notes FROM query_runs ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertIn("filtered_stale_public=1", str(query_row["notes"]))
+
+    def test_discover_web_filters_stacked_location_tooling_role_mismatch_candidates(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Local No-Code Sprint Startup",
+                        url="https://local-nocode.example",
+                        confidence=0.9,
+                        profile_fit="medium",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Fresh founder ask, but it is for the wrong local no-code role.",
+                        fit_rationale="Startup-shaped company, but wrong lane.",
+                        activation_rationale="Fresh public ask for a local no-code builder.",
+                        risk_tags=["location_mismatch", "tooling_mismatch", "role_mismatch"],
+                    ),
+                    DiscoveryCandidate(
+                        name="Fresh Builder Need Startup",
+                        url="https://fresh-ask.example",
+                        confidence=0.88,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Fresh founder ask with clear build gap.",
+                        fit_rationale="Founder-led product work.",
+                        activation_rationale="Current public builder ask.",
+                        signal_tags=["explicit_freelance_ask"],
+                        source_date="2026-04-01",
+                    ),
+                ],
+                raw_response={"id": "fake-mismatch-filter"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder prototype launch-ready web app",
+                    kind="founder",
+                    limit=2,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.total_candidates, 1)
+            targets = repo.list_targets()
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].name, "Fresh Builder Need Startup")
+            query_row = repo.conn.execute("SELECT notes FROM query_runs ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertIn("filtered_mismatch=1", str(query_row["notes"]))
+
+    def test_discover_web_reactivates_expired_target_on_fresh_explicit_rediscovery(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+
+            target_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Dormant Startup",
+                url="https://reactivate.example",
+                source="manual",
+                notes="Old stale startup.",
+            )
+            repo.update_status(target_id, status="expired", reason="Expired opportunity.")
+
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Dormant Startup",
+                        url="https://reactivate.example/jobs",
+                        confidence=0.92,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Fresh explicit builder ask.",
+                        fit_rationale="New public hiring signal.",
+                        activation_rationale="Role reopened this week.",
+                        evidence=["Public role is live again."],
+                    )
+                ],
+                raw_response={"id": "fake-reactivation"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder builder opening",
+                    kind="founder",
+                    limit=1,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.updated, 1)
+            target = next(item for item in repo.list_targets() if item.id == target_id)
+            self.assertEqual(target.status, "candidate")
+            self.assertIsNone(target.next_followup_at)
+            query_run_target = repo.conn.execute(
+                "SELECT action FROM query_run_targets ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(query_run_target["action"], "reactivated")
+
+    def test_discover_web_does_not_reactivate_expired_target_on_weak_rediscovery(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+
+            target_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Dormant Startup",
+                url="https://still-rejected.example",
+                source="manual",
+                notes="Old stale startup.",
+            )
+            repo.update_status(target_id, status="expired", reason="Expired opportunity.")
+
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Dormant Startup",
+                        url="https://still-rejected.example/careers",
+                        confidence=0.7,
+                        profile_fit="medium",
+                        activation_signal="weak",
+                        evidence_confidence="moderate",
+                        freshness="dated",
+                        summary_thesis="Weak stale signal.",
+                        fit_rationale="Not much changed.",
+                        activation_rationale="Old page still exists.",
+                        evidence=["Stale career page remains up."],
+                    )
+                ],
+                raw_response={"id": "fake-no-reactivation"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder builder opening",
+                    kind="founder",
+                    limit=1,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.updated, 1)
+            target = next(item for item in repo.list_targets() if item.id == target_id)
+            self.assertEqual(target.status, "expired")
+            query_run_target = repo.conn.execute(
+                "SELECT action FROM query_run_targets ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(query_run_target["action"], "updated")
+
+    def test_discover_web_does_not_reactivate_rejected_target_even_with_fresh_explicit_signal(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:
+            workspace = initialize_workspace(Path(tmp))
+            config_path = workspace / "leadops.toml"
+            config_path.write_text(
+                """
+[profile]
+name = "Your Practice"
+offer = "Independent product engineer helping founders and very small teams."
+daily_new_lead_cap = 5
+daily_followup_cap = 5
+cooldown_days = 21
+hard_rejects = []
+
+[llm]
+provider = "mock"
+timeout_seconds = 30
+
+[discovery]
+provider = "command"
+command = "ignored"
+timeout_seconds = 30
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config = load_workspace_config(workspace)
+            repo = self._repo_for_workspace(workspace)
+
+            target_id, _ = repo.add_or_update_target(
+                kind="founder",
+                name="Bad Fit Startup",
+                url="https://bad-fit.example",
+                source="manual",
+                notes="Strongly mismatched business shape.",
+            )
+            repo.update_status(target_id, status="rejected", reason="Bad fit.")
+
+            batch = DiscoveryBatch(
+                candidates=[
+                    DiscoveryCandidate(
+                        name="Bad Fit Startup",
+                        url="https://bad-fit.example/jobs",
+                        confidence=0.92,
+                        profile_fit="high",
+                        activation_signal="explicit",
+                        evidence_confidence="strong",
+                        freshness="fresh",
+                        summary_thesis="Fresh explicit builder ask.",
+                        fit_rationale="New public hiring signal.",
+                        activation_rationale="Role reopened this week.",
+                        evidence=["Public role is live again."],
+                    )
+                ],
+                raw_response={"id": "fake-rejected-no-reactivation"},
+            )
+
+            with patch("leadops.discovery._discover_with_command", return_value=batch):
+                result = discover_web(
+                    repo,
+                    config,
+                    query="founder builder opening",
+                    kind="founder",
+                    limit=1,
+                    source="web-discovery",
+                )
+
+            self.assertEqual(result.updated, 1)
+            target = next(item for item in repo.list_targets() if item.id == target_id)
+            self.assertEqual(target.status, "rejected")
+            query_run_target = repo.conn.execute(
+                "SELECT action FROM query_run_targets ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(query_run_target["action"], "updated")
 
     def test_candidate_snooze_hides_until_due_date(self) -> None:
         with tempfile.TemporaryDirectory(prefix="leadops-tests.") as tmp:

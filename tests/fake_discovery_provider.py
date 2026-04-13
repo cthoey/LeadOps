@@ -28,6 +28,10 @@ def main() -> int:
                     "https://protofoundry.example",
                     "https://signals.example/protofoundry",
                 ],
+                "contact_routes": [
+                    "Founder LinkedIn: https://linkedin.example/protofoundry-founder",
+                    "Company contact page: https://protofoundry.example/contact",
+                ],
                 "signal_tags": [
                     "prototype",
                     "launch_pressure",

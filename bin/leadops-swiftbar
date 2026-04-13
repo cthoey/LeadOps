@@ -18,6 +18,8 @@ usage:
   leadops-swiftbar send-digest <workspace> <date>
   leadops-swiftbar mark-status <workspace> <target_id> <status> [extra args...]
   leadops-swiftbar copy-draft <workspace> <packet_date> <target_id>
+  leadops-swiftbar pause-schedule <workspace> [label]
+  leadops-swiftbar resume-schedule <workspace> [label]
 EOF
   exit 2
 }
@@ -97,6 +99,70 @@ for item in items:
 
 raise SystemExit(f"Target {target_id} not found in packet {packet_date}")
 PY
+    ;;
+  pause-schedule)
+    label="${1:-${LEADOPS_LAUNCHD_LABEL:-dev.leadops.daily}}"
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    paused="$HOME/Library/LaunchAgents/$label.plist.paused"
+    launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+    if [[ -f "$plist" ]]; then
+      if [[ -f "$paused" ]]; then
+        rm -f "$paused"
+      fi
+      mv "$plist" "$paused"
+    fi
+    ;;
+  resume-schedule)
+    label="${1:-${LEADOPS_LAUNCHD_LABEL:-dev.leadops.daily}}"
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    paused="$HOME/Library/LaunchAgents/$label.plist.paused"
+    if [[ -f "$paused" ]]; then
+      python3 - "$paused" "$workspace" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+import tomllib
+
+path = Path(sys.argv[1])
+workspace = Path(sys.argv[2]).expanduser()
+with path.open("rb") as handle:
+    payload = plistlib.load(handle)
+
+args = list(payload.get("ProgramArguments", []))
+legacy_approaches = {
+    "builder_need": "transition_focus",
+    "early_product": "balanced",
+    "place_watch": "public_signal_watch",
+}
+for index, value in enumerate(args[:-1]):
+    if value == "--approach":
+        next_value = args[index + 1]
+        mapped = legacy_approaches.get(next_value)
+        if mapped:
+            args[index + 1] = mapped
+
+config_path = workspace / "leadops.toml"
+send_on_run = False
+if config_path.exists():
+    with config_path.open("rb") as handle:
+        config = tomllib.load(handle)
+    send_on_run = bool(config.get("email", {}).get("send_on_run", False))
+if not send_on_run:
+    args = [arg for arg in args if arg != "--send-digest"]
+payload["ProgramArguments"] = args
+path.write_bytes(plistlib.dumps(payload, sort_keys=False))
+PY
+      if [[ -f "$plist" ]]; then
+        launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+        rm -f "$plist"
+      fi
+      mv "$paused" "$plist"
+    fi
+    if [[ ! -f "$plist" ]]; then
+      echo "Missing launch agent plist for $label." >&2
+      exit 1
+    fi
+    launchctl bootstrap "gui/$(id -u)" "$plist"
     ;;
   *)
     usage

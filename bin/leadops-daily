@@ -21,6 +21,7 @@ shift
 
 state_dir="$workspace/var"
 state_path="$state_dir/run-state.env"
+last_run_path="$state_dir/last-run.json"
 mkdir -p "$state_dir"
 
 existing_pid=""
@@ -36,6 +37,69 @@ fi
 started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'pid=%s\nstarted_at=%s\nworkspace=%s\nmode=run-daily\n' "$$" "$started_at" "$workspace" > "$state_path"
 
+write_last_run() {
+  local status="$1"
+  local exit_code="$2"
+  local capture_path="$3"
+  local finished_at
+  finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  python3 - "$last_run_path" "$status" "$started_at" "$finished_at" "$workspace" "$exit_code" "$capture_path" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+last_run_path = Path(sys.argv[1])
+status = sys.argv[2]
+started_at = sys.argv[3]
+finished_at = sys.argv[4]
+workspace = sys.argv[5]
+exit_code = int(sys.argv[6])
+capture_path = Path(sys.argv[7])
+
+summary = "Run complete."
+if capture_path.exists():
+    raw_text = capture_path.read_text(encoding="utf-8", errors="replace")
+    nonempty = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if status != "done":
+        summary = ""
+        if "insufficient_quota" in raw_text and "OpenAI API returned HTTP 429" in raw_text:
+            summary = "OpenAI API quota exhausted (HTTP 429 insufficient_quota)."
+        for matcher in (
+            lambda line: line.startswith("RuntimeError:"),
+            lambda line: line.startswith("ValueError:"),
+            lambda line: line.startswith("Exception:"),
+            lambda line: "failed with exit code" in line,
+            lambda line: "OpenAI API returned HTTP" in line,
+            lambda line: "insufficient_quota" in line,
+        ):
+            if summary:
+                break
+            for line in reversed(nonempty):
+                if matcher(line):
+                    summary = line
+                    break
+            if summary:
+                break
+        if not summary and nonempty:
+            summary = nonempty[-1]
+        summary = re.sub(r"\s+", " ", summary).strip() or f"Run failed with exit code {exit_code}."
+    elif nonempty:
+        summary = re.sub(r"\s+", " ", nonempty[-1]).strip() or summary
+
+payload = {
+    "mode": "run-daily",
+    "workspace": workspace,
+    "status": status,
+    "started_at": started_at,
+    "finished_at": finished_at,
+    "exit_code": exit_code,
+    "summary": summary,
+}
+last_run_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 cleanup() {
   if [[ -f "$state_path" ]]; then
     current_pid="$(sed -n '1s/^pid=//p' "$state_path" 2>/dev/null || true)"
@@ -47,4 +111,19 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-exec python3 -m leadops run-daily --workspace "$workspace" "$@"
+capture_path="$(mktemp)"
+set +e
+python3 -m leadops run-daily --workspace "$workspace" "$@" >"$capture_path" 2>&1
+exit_code="$?"
+set -e
+
+if [[ "$exit_code" -eq 0 ]]; then
+  cat "$capture_path"
+  write_last_run "done" "$exit_code" "$capture_path"
+else
+  cat "$capture_path" >&2
+  write_last_run "failed" "$exit_code" "$capture_path"
+fi
+
+rm -f "$capture_path"
+exit "$exit_code"

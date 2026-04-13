@@ -6,7 +6,13 @@ import subprocess
 
 from leadops.approaches import ApproachSpec
 from leadops.config import WorkspaceConfig
-from leadops.models import DiscoveryBatch, discovery_batch_from_dict
+from leadops.models import (
+    DiscoveryBatch,
+    DiscoveryCandidate,
+    discovery_batch_from_dict,
+    drop_stacked_opportunity_mismatch_candidate,
+    drop_stale_public_signal_candidate,
+)
 from leadops.query_plans import QueryTrack
 from leadops.repository import Repository
 
@@ -68,6 +74,8 @@ def discover_web(
         "profile": {
             "name": config.profile.name,
             "offer": config.profile.offer,
+            "base_location": config.profile.base_location,
+            "service_geography": config.profile.service_geography,
             "ideal_customer": config.profile.ideal_customer,
             "fit_definition": config.profile.fit_definition,
             "preferred_signals": config.profile.preferred_signals,
@@ -86,7 +94,19 @@ def discover_web(
 
     try:
         batch = _discover_with_command(config, payload)
-        candidates = batch.candidates[: max(1, limit)]
+        stale_filtered = 0
+        mismatch_filtered = 0
+        candidates: list[DiscoveryCandidate] = []
+        for candidate in batch.candidates:
+            if drop_stale_public_signal_candidate(candidate):
+                stale_filtered += 1
+                continue
+            if drop_stacked_opportunity_mismatch_candidate(candidate):
+                mismatch_filtered += 1
+                continue
+            candidates.append(candidate)
+            if len(candidates) >= max(1, limit):
+                break
         created = 0
         updated = 0
         for candidate in candidates:
@@ -97,6 +117,7 @@ def discover_web(
                 source=source,
                 notes=candidate.notes_text(),
                 raw_evidence=candidate.raw_evidence_text(),
+                reactivate_expired=_should_reactivate_expired(candidate),
             )
             repo.add_query_run_target(
                 query_run_id=query_run_id,
@@ -110,7 +131,11 @@ def discover_web(
                 updated += 1
 
         notes = f"candidates={len(candidates)} created={created} updated={updated}"
-        if len(batch.candidates) > len(candidates):
+        if stale_filtered:
+            notes += f" filtered_stale_public={stale_filtered}"
+        if mismatch_filtered:
+            notes += f" filtered_mismatch={mismatch_filtered}"
+        if len(batch.candidates) > max(1, limit):
             notes += f" provider_candidates={len(batch.candidates)} truncated=true"
         repo.finish_query_run(
             query_run_id,
@@ -178,3 +203,12 @@ def _discover_with_command(config: WorkspaceConfig, payload: dict[str, object]) 
         )
     raw = json.loads(completed.stdout)
     return discovery_batch_from_dict(raw)
+
+
+def _should_reactivate_expired(candidate: DiscoveryCandidate) -> bool:
+    return (
+        candidate.activation_signal == "explicit"
+        and candidate.freshness == "fresh"
+        and candidate.evidence_confidence in {"strong", "moderate"}
+        and candidate.profile_fit in {"high", "medium"}
+    )

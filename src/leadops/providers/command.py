@@ -26,6 +26,8 @@ class CommandProvider:
             "profile": {
                 "name": config.profile.name,
                 "offer": config.profile.offer,
+                "base_location": config.profile.base_location,
+                "service_geography": config.profile.service_geography,
                 "ideal_customer": config.profile.ideal_customer,
                 "fit_definition": config.profile.fit_definition,
                 "preferred_signals": config.profile.preferred_signals,

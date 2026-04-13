@@ -88,11 +88,17 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         f"- Name: {profile.get('name', '')}",
         f"- Offer: {profile.get('offer', '')}",
     ]
+    base_location = str(profile.get("base_location", "")).strip()
+    service_geography = str(profile.get("service_geography", "")).strip()
     ideal_customer = str(profile.get("ideal_customer", "")).strip()
     fit_definition = str(profile.get("fit_definition", "")).strip()
     preferred_signals = [str(item).strip() for item in profile.get("preferred_signals", []) if str(item).strip()]
     caution_signals = [str(item).strip() for item in profile.get("caution_signals", []) if str(item).strip()]
     post_contact_checks = [str(item).strip() for item in profile.get("post_contact_checks", []) if str(item).strip()]
+    if base_location:
+        lines.append(f"- Base location: {base_location}")
+    if service_geography:
+        lines.append(f"- Service geography: {service_geography}")
     if ideal_customer:
         lines.append(f"- Ideal customer: {ideal_customer}")
     if fit_definition:
@@ -166,7 +172,16 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "Choose `activation_signal` based on public evidence of a visible ask, timing trigger, or implementation gap.",
             "Choose `evidence_confidence` based on how concrete and source-backed the evidence is.",
             "Choose `freshness` only when the source appears time-sensitive or dated. Otherwise use `unknown`.",
+            "Old explicit public asks can support structural fit, but they do not by themselves prove a current reason to reach out.",
+            "If the clearest explicit ask is older than about 180 days and there is no newer confirming implementation signal, do not treat it as current activation.",
+            "A company merely being based in a city is not a location mismatch by itself.",
+            "Use the business profile's base location and service geography when deciding whether a location constraint is a real mismatch.",
+            "Use `location_mismatch` only when the public evidence explicitly requires or strongly prefers a local geography and no remote acceptance is visible.",
+            "Use `tooling_mismatch` when the ask is explicitly for no-code/low-code tooling or another stack outside the business lane.",
+            "Use `role_mismatch` when the ask is for a materially different role such as a no-code builder rather than the business's product-engineering lane.",
+            "If two or more of `location_mismatch`, `tooling_mismatch`, and `role_mismatch` apply, the lead should not be surfaced for outreach.",
             "Choose `action_queue` as one of: pursue_now, watch, nurture, decline.",
+            "A stale explicit public ask should not land in `pursue_now`.",
             "Keep `summary_thesis` to one sentence.",
             "Use `fit_rationale` for the main inference about fit.",
             "Use `activation_rationale` for why this should or should not be acted on now.",
